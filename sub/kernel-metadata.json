@@ -1,0 +1,21 @@
+{
+  "id": "marumarukun/csiro-biomass-sub",
+  "title": "csiro-biomass-sub",
+  "code_file": "code.ipynb",
+  "language": "python",
+  "kernel_type": "notebook",
+  "is_private": "true",
+  "enable_gpu": "false",
+  "enable_tpu": "false",
+  "enable_internet": "false",
+  "dataset_sources": [
+    "marumarukun/csiro-biomass-codes"
+  ],
+  "competition_sources": ["csiro-biomass"],
+  "kernel_sources": [
+    "marumarukun/csiro-biomass-deps"
+  ],
+  "model_sources": [
+    "marumarukun/csiro-biomass-artifacts/other/001/1"
+  ]
+}

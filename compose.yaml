@@ -1,0 +1,38 @@
+services:
+  gpu:
+    container_name: "csiro-biomass-gpu"
+    build:
+      context: ./docker/
+      dockerfile: Dockerfile.gpu
+    shm_size: '64gb'
+    volumes:
+      - type: bind
+        source: $PWD
+        target: /workspace
+    working_dir: /workspace
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              capabilities: [ gpu ]
+    tty: true
+    command: /bin/bash
+    env_file:
+      - .env
+
+  cpu:
+    container_name: "csiro-biomass-cpu"
+    build:
+      context: ./docker/
+      dockerfile: Dockerfile.cpu
+    shm_size: '16gb'
+    volumes:
+      - type: bind
+        source: $PWD
+        target: /workspace
+    working_dir: /workspace
+    tty: true
+    command: /bin/bash
+    env_file:
+      - .env

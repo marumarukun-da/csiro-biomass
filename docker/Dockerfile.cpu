@@ -1,0 +1,14 @@
+# https://github.com/Kaggle/docker-python/releases
+FROM gcr.io/kaggle-images/python:v163
+
+WORKDIR /workspace
+
+# その他のライブラリ
+RUN uv pip install --system \
+    ruff \
+    hydra-core \
+    python-dotenv \
+    rootutils \
+    fire \
+    polars-lts-cpu \
+    japanize-matplotlib
