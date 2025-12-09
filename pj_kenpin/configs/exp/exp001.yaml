@@ -1,0 +1,68 @@
+# =============================================================================
+# 実験設定ファイル
+# =============================================================================
+# このファイルは configs/base/exp_template.yaml をベースとして継承しています。
+# 変更したいパラメータのみを記載すれば、それ以外はテンプレートの値が使用されます。
+#
+# 使い方:
+#   1. このファイルをコピーして新しい実験設定を作成
+#   2. 変更したいパラメータのみを上書き記載
+#   3. リスト形式で複数値を指定するとグリッドサーチが実行される
+#
+# 例: 2つのbackboneと2つの学習率で計4パターンの学習を実行
+#   model:
+#     backbone:
+#       - tf_efficientnetv2_b0.in1k
+#       - tf_efficientnetv2_b1.in1k
+#   optimization:
+#     lr:
+#       - 1e-3
+#       - 1e-4
+#
+# 全設定項目の詳細は configs/base/exp_template.yaml を参照してください。
+# =============================================================================
+
+__include__:
+  - '../base/exp_template.yaml'
+
+# 実験の設定
+experiment:
+  name: exp001
+  seed: 42
+  output_dir: ./output/exp001
+  notes: trial run
+
+
+# データセットの設定
+dataset:
+  train_dir: ./data/sample_dataset/train
+  val_dir: ./data/sample_dataset/val
+  num_classes: 2
+  img_size:
+    - 224
+
+# 学習の設定
+trainer:
+  train_batch_size:
+    - 64
+  val_batch_size: 64
+  num_workers: 4
+  num_epochs: 10
+
+# 最適化の設定
+optimization:
+  lr:
+    - 1e-3
+  weight_decay:
+    - 1e-3
+  warmup_rate:
+    - 0.1
+
+model:
+  backbone:
+    - tf_efficientnetv2_b0.in1k
+    - tf_efficientnetv2_b1.in1k
+  pretrained: True
+  in_chans: 3
+  head: arcface
+

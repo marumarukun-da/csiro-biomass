@@ -1,0 +1,41 @@
+# Mサイズのバックボーン一覧
+# 251006時点のDBから抽出
+
+model_name:
+  # ResNet-RS
+  - resnetrs101.tf_in1k
+
+  # ResNeSt
+  - resnest14d.gluon_in1k
+  - resnest26d.gluon_in1k
+
+  # ConvNeXt V2
+  - convnextv2_tiny.fcmae_ft_in22k_in1k
+  - convformer_s18.sail_in22k_ft_in1k
+
+  # CAFormer
+  - caformer_s18.sail_in22k_ft_in1k
+
+  # RDNet
+  - rdnet_tiny.nv_in1k
+  - rdnet_small.nv_in1k
+
+  # InceptionNext
+  - inception_next_small.sail_in1k
+
+  # MaxViT（インプットサイズ固定）
+  - maxvit_nano_rw_256.sw_in1k
+  - maxvit_tiny_rw_224.sw_in1k
+
+  # Swin V1（インプットサイズ固定）
+  - swin_tiny_patch4_window7_224.ms_in22k_ft_in1k
+  - swin_small_patch4_window7_224.ms_in22k_ft_in1k
+
+  # Swin V2（インプットサイズ固定）
+  - swinv2_tiny_window8_256.ms_in1k
+
+  # EfficientVit
+  - efficientvit_b3.r224_in1k
+  - efficientvit_l1.r224_in1k
+  - efficientvit_l2.r224_in1k
+

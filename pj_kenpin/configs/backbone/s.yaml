@@ -1,0 +1,36 @@
+# Sサイズのバックボーン一覧
+# 251006時点のDBから抽出
+
+model_name:
+  # EfficientNet V1
+  - tf_efficientnet_b0.ns_jft_in1k
+  - tf_efficientnet_b1.ns_jft_in1k
+  - tf_efficientnet_b2.ns_jft_in1k
+  - tf_efficientnet_b3.ns_jft_in1k
+
+  # EfficientNet V2
+  - tf_efficientnetv2_b0.in1k
+  - tf_efficientnetv2_b1.in1k
+  - tf_efficientnetv2_b2.in1k
+  - tf_efficientnetv2_b3.in21k_ft_in1k
+
+  # ResNet-RS
+  - resnetrs50.tf_in1k
+
+  # ConvNeXt V1
+  - convnext_femto.d1_in1k
+  - convnext_pico.d1_in1k
+  - convnext_nano.in12k_ft_in1k
+  - convnext_tiny.in12k_ft_in1k
+
+  # ConvNeXt V2
+  - convnextv2_femto.fcmae_ft_in1k
+  - convnextv2_pico.fcmae_ft_in1k
+  - convnextv2_nano.fcmae_ft_in22k_in1k
+
+  # InceptionNext
+  - inception_next_tiny.sail_in1k
+
+  # EfficientVit
+  - efficientvit_b1.r224_in1k
+  - efficientvit_b2.r224_in1k
