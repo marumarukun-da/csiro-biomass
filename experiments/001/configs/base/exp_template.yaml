@@ -1,0 +1,119 @@
+# =============================================================================
+# Base experiment template for biomass prediction
+# =============================================================================
+# This is the base configuration that all experiments inherit from.
+# Override specific values in experiment configs (e.g., configs/exp/exp001.yaml)
+#
+# Architecture:
+#   Default: Dual Input model (left-right split with shared backbone)
+#   - Original image (2000x1000) is split into left/right halves (1000x1000 each)
+#   - Both halves are processed by shared backbone
+#   - Features are concatenated and passed to regression head
+#   - TTA is applied to original image before splitting
+#
+# Grid Search:
+#   Any parameter specified as a list will be swept (grid search).
+#   Example: backbone: [model_a, model_b] and lr: [1e-3, 1e-4] = 4 runs
+#
+# Exceptions (NOT swept even if list):
+#   - experiment.notes
+#   - augmentation.normalize.*
+#   - dataset.target_cols
+#   - loss.weights
+# =============================================================================
+
+# Experiment settings
+experiment:
+  name: exp000
+  seed: 42
+  output_dir: ./output
+  notes: ""
+
+# Dataset settings
+dataset:
+  # Paths (set in experiment config)
+  train_csv: null
+  image_dir: null
+
+  # Image settings
+  img_size:
+    - 224
+  in_chans: 3
+
+  # Target columns to predict
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+# Training settings
+trainer:
+  # Batch sizes
+  train_batch_size: 32
+  val_batch_size: 64
+
+  # Workers
+  num_workers: 4
+
+  # Training
+  num_epochs: 30
+  use_amp: true
+
+  # Cross-validation
+  n_folds: 5
+  fold: null  # null = train all folds, or specify fold number (1-5)
+
+# Optimization settings
+optimization:
+  lr: 1e-4
+  weight_decay: 1e-4
+  warmup_rate: 0.1
+
+  # EMA (Exponential Moving Average)
+  use_ema: true
+  ema_decay: 0.995
+  ema_start_ratio: 0.1
+
+# Model settings
+model:
+  backbone: tf_efficientnetv2_b0.in1k
+  pretrained: true
+  num_outputs: 3
+  dropout: 0.2
+  hidden_size: 512
+
+# Loss function settings
+loss:
+  beta: 1.0  # Smooth L1 beta parameter
+
+  # Target weights (based on competition metric)
+  weights:
+    Dry_Total_g: 0.5
+    GDM_g: 0.2
+    Dry_Green_g: 0.1
+
+# Augmentation settings
+augmentation:
+  # Normalization (ImageNet defaults)
+  normalize:
+    mean:
+      - 0.485
+      - 0.456
+      - 0.406
+    std:
+      - 0.229
+      - 0.224
+      - 0.225
+
+  # Training augmentations
+  train:
+    horizontal_flip:
+      p: 0.5
+    vertical_flip:
+      p: 0.5
+    random_brightness_contrast:
+      brightness_limit: 0.2
+      contrast_limit: 0.2
+      p: 0.25
+
+  # Validation uses only Resize + Normalize (automatic)
