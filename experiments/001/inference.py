@@ -53,6 +53,7 @@ def load_models(
     run_dir: Path,
     folds: list[int],
     device: torch.device,
+    weight_type: str = "best",
 ) -> tuple[list[torch.nn.Module], dict]:
     """Load models from all folds.
 
@@ -61,6 +62,8 @@ def load_models(
         ├── weights/
         │   ├── best_fold0.pth
         │   ├── best_fold1.pth
+        │   ├── last_fold0.pth
+        │   ├── last_fold1.pth
         │   └── ...
         └── config.yaml
 
@@ -68,10 +71,14 @@ def load_models(
         run_dir: Directory containing trained models (weights/, config.yaml)
         folds: List of fold numbers to load
         device: Device to load models to
+        weight_type: Type of weights to load ("best" or "last")
 
     Returns:
         Tuple of (list of loaded models, model config dict)
     """
+    if weight_type not in ("best", "last"):
+        raise ValueError(f"weight_type must be 'best' or 'last', got '{weight_type}'")
+
     models = []
     model_config = None
 
@@ -106,17 +113,28 @@ def load_models(
 
         # Load weights from run_dir/weights/
         weights_dir = run_dir / "weights"
-        weight_path = weights_dir / f"best_fold{fold}.pth"
 
-        if not weight_path.exists():
-            # Try alternative paths
-            alt_paths = [
+        # Primary and fallback paths based on weight_type
+        if weight_type == "best":
+            primary_path = weights_dir / f"best_fold{fold}.pth"
+            fallback_paths = [
                 weights_dir / f"last_fold{fold}.pth",
                 run_dir / f"best_fold{fold}.pth",
             ]
-            for alt in alt_paths:
+        else:  # weight_type == "last"
+            primary_path = weights_dir / f"last_fold{fold}.pth"
+            fallback_paths = [
+                weights_dir / f"best_fold{fold}.pth",
+                run_dir / f"last_fold{fold}.pth",
+            ]
+
+        weight_path = primary_path
+        if not weight_path.exists():
+            # Try fallback paths
+            for alt in fallback_paths:
                 if alt.exists():
                     weight_path = alt
+                    print(f"Warning: {primary_path.name} not found, using {alt.name}")
                     break
 
         if not weight_path.exists():
@@ -289,6 +307,13 @@ def main():
     parser.add_argument("--img_size", type=int, default=224, help="Image size")
     parser.add_argument("--device", type=str, default="cuda", help="Device")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory")
+    parser.add_argument(
+        "--weight_type",
+        type=str,
+        default="best",
+        choices=["best", "last"],
+        help="Weight type to use: 'best' (highest R²) or 'last' (final epoch)",
+    )
     args = parser.parse_args()
 
     # Setup device
@@ -314,10 +339,12 @@ def main():
     print(f"Using folds: {folds}")
 
     # Load models
+    print(f"Weight type: {args.weight_type}")
     models, _ = load_models(
         run_dir=run_dir,
         folds=folds,
         device=device,
+        weight_type=args.weight_type,
     )
 
     # Setup transforms (TTA always enabled)
@@ -363,6 +390,7 @@ def kaggle_inference(
     run_name: str,
     folds: list[int] | None = None,
     img_size: int = 224,
+    weight_type: str = "best",
 ) -> pd.DataFrame:
     """Inference function for Kaggle notebook.
 
@@ -370,6 +398,7 @@ def kaggle_inference(
         /kaggle/input/{competition}-artifacts/other/{exp_name}/1/{run_name}/
         ├── weights/
         │   ├── best_fold0.pth
+        │   ├── last_fold0.pth
         │   └── ...
         └── config.yaml
 
@@ -377,6 +406,7 @@ def kaggle_inference(
         run_name: Run name (e.g., '001_tf_efficientnetv2_b0_in1k__img_size-224__lr-0_001')
         folds: List of fold numbers (default: all 5 folds, 0-4)
         img_size: Image size
+        weight_type: Type of weights to load ("best" or "last")
 
     Returns:
         Submission DataFrame
@@ -386,6 +416,8 @@ def kaggle_inference(
     if folds is None:
         folds = list(range(5))  # 5-fold (0-4)
 
+    print(f"Weight type: {weight_type}")
+
     # Load models from artifact directory
     # Kaggle: ARTIFACT_EXP_DIR / run_name (no experiment_dir needed)
     run_dir = config.ARTIFACT_EXP_DIR(config.EXP_NAME) / run_name
@@ -394,6 +426,7 @@ def kaggle_inference(
         run_dir=run_dir,
         folds=folds,
         device=device,
+        weight_type=weight_type,
     )
 
     # Setup transforms (TTA always enabled)
