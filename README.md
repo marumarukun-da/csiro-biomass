@@ -4,13 +4,13 @@
 
 初めてこのプロジェクトを使う場合は、以下のチェックリストに従ってセットアップしてください。
 
-- [ ] `.env.sample` をコピーして `.env` を作成
-- [ ] `.env` に `KAGGLE_USERNAME` と `KAGGLE_KEY` を設定
-- [ ] Docker コンテナを起動 (`docker compose up -d --build gpu` or `cpu`)
-- [ ] VSCode「コンテナーで再度開く」でコンテナに接続
-- [ ] 推奨拡張機能をインストール
-- [ ] Kaggle上でコンペティションへの参加登録
-- [ ] `sh scripts/download_competition.sh` でデータをダウンロード
+- [x] `.env.sample` をコピーして `.env` を作成
+- [x] `.env` に `KAGGLE_USERNAME` と `KAGGLE_KEY` を設定
+- [x] Docker コンテナを起動 (`docker compose up -d --build gpu` or `cpu`)
+- [x] VSCode「コンテナーで再度開く」でコンテナに接続
+- [x] 推奨拡張機能をインストール
+- [x] Kaggle上でコンペティションへの参加登録
+- [x] `sh scripts/download_competition.sh` でデータをダウンロード
 
 ---
 
@@ -326,6 +326,86 @@ sub/
 ```
 
 </details>
+
+---
+
+## パス環境の詳細
+
+ローカル環境とKaggle環境でのパス構造の対応関係です。
+
+### ローカル環境（学習時）
+
+```
+/workspace/ (プロジェクトルート)
+│
+├── experiments/{exp}/            # 実験コード
+│   ├── config.py
+│   ├── train.py (or code.ipynb)
+│   ├── inference.py
+│   └── src/
+│
+├── data/
+│   ├── input/{competition}/      # コンペデータ
+│   │   ├── train.csv
+│   │   ├── test.csv
+│   │   └── train/, test/ (画像等)
+│   │
+│   └── output/{exp}/1/           # ★学習結果の出力先★
+│       └── {timestamp}_{exp_name}/
+│           └── {run_name}/       # ← これをKaggleにアップロード
+│               ├── weights/
+│               │   └── *.pth
+│               └── config.yaml
+```
+
+### Kaggle環境（推論時）
+
+```
+/kaggle/
+│
+├── working/                      # ★コードを配置★
+│   ├── config.py
+│   ├── inference.py
+│   └── src/
+│
+└── input/
+    ├── {competition}/            # コンペデータ（自動で利用可能）
+    │   ├── test.csv
+    │   └── test/
+    │
+    └── {competition}-artifacts/  # ★アップロードしたモデル★
+        └── other/
+            └── {exp}/
+                └── 1/
+                    └── {run_name}/
+                        ├── weights/
+                        └── config.yaml
+```
+
+### config.py での変数対応
+
+| 変数 | ローカル | Kaggle |
+|------|----------|--------|
+| `INPUT_DIR` | `/workspace/data/input` | `/kaggle/input` |
+| `OUTPUT_DIR` | `/workspace/data/output/{exp}/1` | `/kaggle/working` |
+| `COMP_DATASET_DIR` | `INPUT_DIR/{competition}` | `/kaggle/input/{competition}` |
+| `ARTIFACT_DIR` | `/workspace/data/output` | `/kaggle/input/{competition}-artifacts/other` |
+
+### アップロード時の注意
+
+ローカルの出力構造:
+```
+data/output/{exp}/1/{timestamp}_{exp_name}/{run_name}/
+                    ~~~~~~~~~~~~~~~~~~~~~~ ~~~~~~~~~~
+                    中間ディレクトリ        ← これをアップロード
+```
+
+**`{run_name}/` ディレクトリをアップロード**します。`{timestamp}_{exp_name}/`は中間ディレクトリなので含めません。
+
+Kaggle Datasets上の構造:
+```
+{competition}-artifacts/other/{exp}/1/{run_name}/
+```
 
 ---
 
