@@ -26,7 +26,7 @@
 experiment:
   name: exp000
   seed: 42
-  output_dir: ./output
+  output_dir: null  # null = use default from config.py
   notes: ""
 
 # Dataset settings

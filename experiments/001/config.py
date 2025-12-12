@@ -5,9 +5,13 @@ maintaining compatibility with the existing Kaggle submission workflow.
 """
 
 import os
+import sys
 from pathlib import Path
 
-EXP_NAME = Path(__file__).parent.name
+EXP_DIR = Path(__file__).parent.resolve()
+# EXP_NAME should always be "001" regardless of where the code is located
+# (e.g., on Kaggle, code may be in /kaggle/working/ but EXP_NAME should still be "001")
+EXP_NAME = "001"
 
 
 # ---------- # DIRECTORIES # ---------- #
@@ -23,6 +27,11 @@ if not IS_KAGGLE_ENV:
         cwd=True,
         pythonpath=True,
     )
+
+    # Add experiment directory to sys.path AFTER rootutils
+    # This ensures experiments/001/src takes priority over /workspace/src
+    sys.path.insert(0, str(EXP_DIR))
+
     INPUT_DIR = ROOT_DIR / "data" / "input"
     # ARTIFACT_DIR / EXP_NAME / 1 でのアクセスを想定
     ARTIFACT_DIR = ROOT_DIR / "data" / "output"
@@ -31,7 +40,7 @@ if not IS_KAGGLE_ENV:
 
     KAGGLE_USERNAME = os.getenv("KAGGLE_USERNAME", "marumarukun")
     ARTIFACTS_HANDLE = f"{KAGGLE_USERNAME}/{KAGGLE_COMPETITION_NAME}-artifacts/other/{EXP_NAME}"
-    CODES_HANDLE = f"{KAGGLE_USERNAME}/{KAGGLE_COMPETITION_NAME}-codes"
+    CODES_HANDLE = f"{KAGGLE_USERNAME}/{KAGGLE_COMPETITION_NAME}-codes-{EXP_NAME}"
 else:
     ROOT_DIR = Path("/kaggle/working")
     INPUT_DIR = Path("/kaggle/input")
@@ -42,8 +51,13 @@ else:
 
 COMP_DATASET_DIR = INPUT_DIR / KAGGLE_COMPETITION_NAME
 
-for d in [INPUT_DIR, OUTPUT_DIR]:
-    d.mkdir(exist_ok=True, parents=True)
+# Create output directory (INPUT_DIR is read-only on Kaggle)
+if not IS_KAGGLE_ENV:
+    for d in [INPUT_DIR, OUTPUT_DIR]:
+        d.mkdir(exist_ok=True, parents=True)
+else:
+    # On Kaggle, only create OUTPUT_DIR (working directory)
+    OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
 # 対象の exp の artifact が格納されている場所を返す
 ARTIFACT_EXP_DIR = lambda exp_name: ARTIFACT_DIR / exp_name / "1"  # noqa: E731

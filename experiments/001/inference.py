@@ -7,21 +7,26 @@ Supports:
 - Automatic submission creation
 """
 
+# isort: off
+# config must be imported first to setup paths via rootutils
+import config  # noqa: F401
+# isort: on
+
 import argparse
 import json
 from pathlib import Path
 
 import albumentations as A
-import config
 import cv2
 import numpy as np
 import pandas as pd
 import torch
 from albumentations.pytorch import ToTensorV2
+from tqdm import tqdm
+
 from src.data import TARGET_COLS_PRED, build_tta_pre_split_transforms
 from src.metric import derive_all_targets
 from src.model import build_model
-from tqdm import tqdm
 
 
 def build_post_split_transform(
@@ -45,20 +50,24 @@ def build_post_split_transform(
 
 
 def load_models(
-    artifact_dir: Path,
-    run_id: str,
+    run_dir: Path,
     folds: list[int],
     device: torch.device,
-    use_ema: bool = True,
 ) -> tuple[list[torch.nn.Module], dict]:
     """Load models from all folds.
 
+    Expected directory structure (created by train.py):
+        run_dir/
+        ├── weights/
+        │   ├── best_fold0.pth
+        │   ├── best_fold1.pth
+        │   └── ...
+        └── config.yaml
+
     Args:
-        artifact_dir: Directory containing trained models
-        run_id: Run identifier (e.g., "run_0001")
+        run_dir: Directory containing trained models (weights/, config.yaml)
         folds: List of fold numbers to load
         device: Device to load models to
-        use_ema: Whether to use EMA weights if available
 
     Returns:
         Tuple of (list of loaded models, model config dict)
@@ -66,28 +75,25 @@ def load_models(
     models = []
     model_config = None
 
-    for fold in folds:
-        model_dir = artifact_dir / run_id / f"fold_{fold}"
+    # Load config (same for all folds)
+    config_path = run_dir / "config.yaml"
+    if config_path.exists():
+        from omegaconf import OmegaConf
 
-        # Load config (same for all folds)
-        config_path = model_dir / "config.yaml"
-        if config_path.exists():
-            from omegaconf import OmegaConf
-
-            cfg = OmegaConf.load(str(config_path))
-            model_cfg = OmegaConf.to_container(cfg, resolve=True).get("model", {})
+        cfg = OmegaConf.load(str(config_path))
+        model_cfg = OmegaConf.to_container(cfg, resolve=True).get("model", {})
+    else:
+        # Fallback to JSON config
+        json_path = run_dir / "config.json"
+        if json_path.exists():
+            with open(json_path) as f:
+                model_cfg = json.load(f)
         else:
-            # Fallback to JSON config
-            json_path = model_dir / "config.json"
-            if json_path.exists():
-                with open(json_path) as f:
-                    model_cfg = json.load(f)
-            else:
-                model_cfg = {}
+            model_cfg = {}
 
-        if model_config is None:
-            model_config = model_cfg
+    model_config = model_cfg
 
+    for fold in folds:
         # Build model
         model = build_model(
             model_name=model_cfg.get("backbone", "tf_efficientnetv2_b0.in1k"),
@@ -98,22 +104,23 @@ def load_models(
             device=device,
         )
 
-        # Load weights
-        weight_path = model_dir / "weights" / f"best_fold{fold}.pth"
+        # Load weights from run_dir/weights/
+        weights_dir = run_dir / "weights"
+        weight_path = weights_dir / f"best_fold{fold}.pth"
+
         if not weight_path.exists():
             # Try alternative paths
             alt_paths = [
-                model_dir / f"best_fold{fold}.pth",
-                model_dir / "best_model.pth",
-                model_dir / "best_model_ema.pth" if use_ema else None,
+                weights_dir / f"last_fold{fold}.pth",
+                run_dir / f"best_fold{fold}.pth",
             ]
             for alt in alt_paths:
-                if alt and alt.exists():
+                if alt.exists():
                     weight_path = alt
                     break
 
         if not weight_path.exists():
-            raise FileNotFoundError(f"Cannot find weights for fold {fold} in {model_dir}")
+            raise FileNotFoundError(f"Cannot find weights for fold {fold} in {weights_dir}")
 
         state_dict = torch.load(weight_path, map_location=device, weights_only=True)
         model.load_state_dict(state_dict)
@@ -271,10 +278,19 @@ def create_submission(
 
 def main():
     parser = argparse.ArgumentParser(description="Inference for biomass prediction")
-    parser.add_argument("--run_id", type=str, required=True, help="Run ID (e.g., run_0001)")
+    parser.add_argument(
+        "--experiment_dir",
+        type=str,
+        required=True,
+        help="Experiment directory name (e.g., '20251212_111833_exp001')",
+    )
+    parser.add_argument(
+        "--run_name",
+        type=str,
+        required=True,
+        help="Run name (e.g., '001_tf_efficientnetv2_b0_in1k__img_size-224__lr-0_001')",
+    )
     parser.add_argument("--folds", type=str, default="all", help="Folds to use (e.g., '0,1,2' or 'all')")
-    parser.add_argument("--no_tta", action="store_true", help="Disable TTA")
-    parser.add_argument("--no_ema", action="store_true", help="Don't use EMA weights")
     parser.add_argument("--img_size", type=int, default=224, help="Image size")
     parser.add_argument("--device", type=str, default="cuda", help="Device")
     parser.add_argument("--output_dir", type=str, default=None, help="Output directory")
@@ -285,8 +301,14 @@ def main():
     print(f"Using device: {device}")
 
     # Setup paths
-    artifact_dir = config.OUTPUT_DIR
-    output_dir = Path(args.output_dir) if args.output_dir else config.OUTPUT_DIR
+    # Local: config.OUTPUT_DIR / experiment_dir / run_name
+    run_dir = config.OUTPUT_DIR / args.experiment_dir / args.run_name
+    output_dir = Path(args.output_dir) if args.output_dir else run_dir
+
+    if not run_dir.exists():
+        raise FileNotFoundError(f"Run directory not found: {run_dir}")
+
+    print(f"Run directory: {run_dir}")
 
     # Determine folds
     if args.folds == "all":
@@ -298,18 +320,13 @@ def main():
 
     # Load models
     models, _ = load_models(
-        artifact_dir=artifact_dir,
-        run_id=args.run_id,
+        run_dir=run_dir,
         folds=folds,
         device=device,
-        use_ema=not args.no_ema,
     )
 
-    # Setup transforms
+    # Setup transforms (TTA always enabled)
     tta_transforms = build_tta_pre_split_transforms()
-    if args.no_tta:
-        tta_transforms = tta_transforms[:1]  # Only original
-
     post_split_transform = build_post_split_transform(args.img_size)
 
     print(f"Using {len(tta_transforms)} TTA transforms")
@@ -346,19 +363,22 @@ def main():
 
 # Kaggle notebook inference function
 def kaggle_inference(
-    run_id: str = "run_0001",
+    run_name: str,
     folds: list[int] | None = None,
-    use_tta: bool = True,
-    use_ema: bool = True,
     img_size: int = 224,
 ) -> pd.DataFrame:
     """Inference function for Kaggle notebook.
 
+    On Kaggle, the run directory structure is:
+        /kaggle/input/{competition}-artifacts/other/{exp_name}/1/{run_name}/
+        ├── weights/
+        │   ├── best_fold0.pth
+        │   └── ...
+        └── config.yaml
+
     Args:
-        run_id: Run identifier
+        run_name: Run name (e.g., '001_tf_efficientnetv2_b0_in1k__img_size-224__lr-0_001')
         folds: List of fold numbers (default: all 5 folds, 0-4)
-        use_tta: Whether to use TTA
-        use_ema: Whether to use EMA weights
         img_size: Image size
 
     Returns:
@@ -370,21 +390,17 @@ def kaggle_inference(
         folds = list(range(5))  # 5-fold (0-4)
 
     # Load models from artifact directory
-    artifact_dir = config.ARTIFACT_EXP_DIR(config.EXP_NAME)
+    # Kaggle: ARTIFACT_EXP_DIR / run_name (no experiment_dir needed)
+    run_dir = config.ARTIFACT_EXP_DIR(config.EXP_NAME) / run_name
 
     models, _ = load_models(
-        artifact_dir=artifact_dir,
-        run_id=run_id,
+        run_dir=run_dir,
         folds=folds,
         device=device,
-        use_ema=use_ema,
     )
 
-    # Setup transforms
+    # Setup transforms (TTA always enabled)
     tta_transforms = build_tta_pre_split_transforms()
-    if not use_tta:
-        tta_transforms = tta_transforms[:1]
-
     post_split_transform = build_post_split_transform(img_size)
 
     # Load test data

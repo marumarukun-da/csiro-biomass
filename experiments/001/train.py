@@ -3,6 +3,11 @@
 Based on pj_kenpin's training framework, adapted for regression tasks.
 """
 
+# isort: off
+# config must be imported first to setup paths via rootutils
+import config  # noqa: F401
+# isort: on
+
 import argparse
 import csv
 import json
@@ -21,6 +26,12 @@ import pandas as pd
 import torch
 from omegaconf import OmegaConf
 from sklearn.model_selection import KFold, StratifiedKFold
+from timm.utils import ModelEmaV3
+from torch.amp import GradScaler, autocast
+from torch.utils.data import DataLoader
+from tqdm.auto import tqdm
+from transformers import get_cosine_schedule_with_warmup
+
 from src.data import (
     DualInputBiomassDataset,
     build_post_split_transform,
@@ -32,11 +43,6 @@ from src.loss_function import build_loss_function
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_3targets
 from src.model import build_model
 from src.seed import seed_everything
-from timm.utils import ModelEmaV3
-from torch.amp import GradScaler, autocast
-from torch.utils.data import DataLoader
-from tqdm.auto import tqdm
-from transformers import get_cosine_schedule_with_warmup
 
 # Keys that should NOT be swept even if they are lists
 NON_SWEEP_PATHS: set[tuple[str, ...]] = {
@@ -170,29 +176,75 @@ def create_folds(
     return df
 
 
-def plot_training_curves(history: dict[str, list[float]], output_dir: Path) -> None:
-    """Plot and save training curves."""
+def plot_training_curves(
+    all_histories: list[dict[str, list[float]]],
+    output_dir: Path,
+    folds: list[int] | None = None,
+) -> None:
+    """Plot and save training curves for all folds.
+
+    Args:
+        all_histories: List of history dicts, one per fold
+        output_dir: Directory to save the plot
+        folds: List of fold numbers (for labels)
+    """
     ensure_dir(output_dir)
 
-    epochs = range(1, len(history["train_loss"]) + 1)
+    if not all_histories:
+        return
 
-    fig, axes = plt.subplots(1, 2, figsize=(12, 4))
+    # Colors for each fold
+    colors = plt.cm.tab10.colors
 
-    # Loss curve
-    axes[0].plot(epochs, history["train_loss"], label="train")
-    axes[0].plot(epochs, history["val_loss"], label="val")
+    fig, axes = plt.subplots(1, 3, figsize=(15, 4))
+
+    n_folds = len(all_histories)
+    if folds is None:
+        folds = list(range(n_folds))
+
+    # Plot each fold
+    for i, (history, fold) in enumerate(zip(all_histories, folds)):
+        epochs = range(1, len(history["train_loss"]) + 1)
+        color = colors[i % len(colors)]
+
+        # Train loss
+        axes[0].plot(epochs, history["train_loss"], color=color, alpha=0.7, label=f"fold{fold}")
+
+        # Val loss
+        axes[1].plot(epochs, history["val_loss"], color=color, alpha=0.7, label=f"fold{fold}")
+
+        # Val R²
+        if "val_r2" in history:
+            axes[2].plot(epochs, history["val_r2"], color=color, alpha=0.7, label=f"fold{fold}")
+
+    # Calculate and plot mean curves
+    if n_folds > 1:
+        mean_train_loss = np.mean([h["train_loss"] for h in all_histories], axis=0)
+        mean_val_loss = np.mean([h["val_loss"] for h in all_histories], axis=0)
+        epochs = range(1, len(mean_train_loss) + 1)
+
+        axes[0].plot(epochs, mean_train_loss, color="black", linewidth=2, linestyle="--", label="mean")
+        axes[1].plot(epochs, mean_val_loss, color="black", linewidth=2, linestyle="--", label="mean")
+
+        if "val_r2" in all_histories[0]:
+            mean_val_r2 = np.mean([h["val_r2"] for h in all_histories], axis=0)
+            axes[2].plot(epochs, mean_val_r2, color="black", linewidth=2, linestyle="--", label="mean")
+
+    # Labels and titles
     axes[0].set_xlabel("Epoch")
     axes[0].set_ylabel("Loss")
-    axes[0].set_title("Loss Curve")
-    axes[0].legend()
+    axes[0].set_title("Train Loss")
+    axes[0].legend(fontsize=8)
 
-    # R² curve
-    if "val_r2" in history:
-        axes[1].plot(epochs, history["val_r2"], label="val R²", color="green")
-        axes[1].set_xlabel("Epoch")
-        axes[1].set_ylabel("Weighted R²")
-        axes[1].set_title("Validation R² Curve")
-        axes[1].legend()
+    axes[1].set_xlabel("Epoch")
+    axes[1].set_ylabel("Loss")
+    axes[1].set_title("Validation Loss")
+    axes[1].legend(fontsize=8)
+
+    axes[2].set_xlabel("Epoch")
+    axes[2].set_ylabel("Weighted R²")
+    axes[2].set_title("Validation R²")
+    axes[2].legend(fontsize=8)
 
     plt.tight_layout()
     plt.savefig(output_dir / "training_curves.png", dpi=100)
@@ -337,7 +389,8 @@ def train_single_fold(
     # Build transforms and datasets
     normalize_cfg = aug_cfg.get("normalize", {})
     train_aug_cfg = aug_cfg.get("train", {})
-    image_dir = Path(dataset_cfg.get("image_dir", "."))
+    image_dir_cfg = dataset_cfg.get("image_dir")
+    image_dir = Path(image_dir_cfg) if image_dir_cfg else config.get_image_dir()
     image_col = "image_path"
 
     # Pre-split + post-split transforms
@@ -541,7 +594,8 @@ def train_single_run(
     logger.info(f"Seed: {seed}")
 
     # Load and prepare data
-    train_csv = Path(dataset_cfg.get("train_csv", ""))
+    train_csv_cfg = dataset_cfg.get("train_csv")
+    train_csv = Path(train_csv_cfg) if train_csv_cfg else config.get_train_csv_path()
     if not train_csv.exists():
         raise FileNotFoundError(f"Train CSV not found: {train_csv}")
 
@@ -589,14 +643,9 @@ def train_single_run(
     logger.info(f"Average R²: {avg_r2:.5f}")
     logger.info(f"Average Loss: {avg_loss:.5f}")
 
-    # Plot combined training curves
+    # Plot combined training curves (all folds + mean)
     if all_histories:
-        combined_history = {
-            "train_loss": np.mean([h["train_loss"] for h in all_histories], axis=0).tolist(),
-            "val_loss": np.mean([h["val_loss"] for h in all_histories], axis=0).tolist(),
-            "val_r2": np.mean([h["val_r2"] for h in all_histories], axis=0).tolist(),
-        }
-        plot_training_curves(combined_history, run_dir / "plots")
+        plot_training_curves(all_histories, run_dir / "plots", folds=folds_to_train)
 
     # Save metrics
     metrics_path = run_dir / "logs" / "metrics.csv"
@@ -639,8 +688,11 @@ def main() -> None:
     parser.add_argument("--config", type=str, required=True, help="Path to experiment config YAML")
     args = parser.parse_args()
 
-    # Load config
-    config_path = Path(args.config).expanduser().resolve()
+    # Load config (resolve relative to EXP_DIR, not cwd which may be changed by rootutils)
+    config_path = Path(args.config).expanduser()
+    if not config_path.is_absolute():
+        config_path = config.EXP_DIR / config_path
+    config_path = config_path.resolve()
     if not config_path.exists():
         raise FileNotFoundError(f"Config not found: {config_path}")
 
@@ -662,7 +714,8 @@ def main() -> None:
     timestamp = datetime.now(jst).strftime("%Y%m%d_%H%M%S")
     experiment_cfg = base_cfg.get("experiment", {})
     experiment_name = experiment_cfg.get("name", "exp")
-    output_root = Path(experiment_cfg.get("output_dir", "./output")).expanduser()
+    output_dir_cfg = experiment_cfg.get("output_dir")
+    output_root = Path(output_dir_cfg).expanduser() if output_dir_cfg else config.OUTPUT_DIR
     experiment_dir = output_root / f"{timestamp}_{sanitize_name(str(experiment_name))}"
     ensure_dir(experiment_dir)
 

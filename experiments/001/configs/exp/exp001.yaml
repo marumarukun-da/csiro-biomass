@@ -28,9 +28,9 @@ experiment:
 
 # Dataset settings
 dataset:
-  # Paths will be resolved relative to project root
-  train_csv: ./data/input/csiro-biomass/train.csv
-  image_dir: ./data/input/csiro-biomass
+  # Paths are resolved by config.py (null = use default from config.py)
+  train_csv: null
+  image_dir: null
 
   img_size:
     - 224
