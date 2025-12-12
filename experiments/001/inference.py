@@ -24,7 +24,7 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 
-from src.data import TARGET_COLS_PRED, build_tta_pre_split_transforms
+from src.data import build_tta_pre_split_transforms
 from src.metric import derive_all_targets
 from src.model import build_model
 
@@ -186,11 +186,11 @@ def run_inference(
     post_split_transform: A.Compose,
     device: torch.device,
     image_col: str = "image_path",
-) -> pd.DataFrame:
+) -> dict[str, np.ndarray]:
     """Run inference on test set.
 
     Args:
-        test_df: Test DataFrame (unique images)
+        test_df: Test DataFrame
         image_dir: Directory containing images
         models: List of models for ensemble
         tta_transforms: TTA transforms (applied before split)
@@ -199,10 +199,10 @@ def run_inference(
         image_col: Column name for image path
 
     Returns:
-        DataFrame with predictions (3 columns)
+        Dict mapping image_path to 5 target predictions
+        Order: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
     """
-    predictions = []
-    image_ids = []
+    predictions = {}
 
     # Get unique images
     unique_images = test_df[image_col].unique()
@@ -215,65 +215,60 @@ def run_inference(
             raise FileNotFoundError(f"Cannot read image: {full_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Predict
-        pred = predict_single_image(image, models, tta_transforms, post_split_transform, device)
-        predictions.append(pred)
+        # Predict (3 values: Dry_Total_g, GDM_g, Dry_Green_g)
+        pred_3 = predict_single_image(image, models, tta_transforms, post_split_transform, device)
 
-        # Extract image_id from path
-        image_id = Path(image_path).stem
-        image_ids.append(image_id)
+        # Derive all 5 targets from 3 predictions
+        # Input: [Dry_Total_g, GDM_g, Dry_Green_g]
+        # Output: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
+        pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
 
-    # Create predictions DataFrame
-    pred_df = pd.DataFrame(predictions, columns=TARGET_COLS_PRED)
-    pred_df["image_id"] = image_ids
-    pred_df["image_path"] = unique_images
+        predictions[image_path] = pred_5
 
-    return pred_df
+    return predictions
 
 
 def create_submission(
-    pred_df: pd.DataFrame,
-    sample_submission: pd.DataFrame,
+    test_df: pd.DataFrame,
+    predictions: dict[str, np.ndarray],
 ) -> pd.DataFrame:
-    """Create submission file in Long format.
+    """Create submission file using test_df's sample_id directly.
 
     Args:
-        pred_df: DataFrame with predictions (Wide format, 3 columns)
-        sample_submission: Sample submission DataFrame
+        test_df: Test DataFrame with columns [sample_id, image_path, target_name]
+        predictions: Dict mapping image_path to 5 target predictions
+                    Order: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
 
     Returns:
-        Submission DataFrame in Long format
+        Submission DataFrame with columns [sample_id, target]
     """
-    # Derive all 5 targets from 3 predictions
-    pred_3 = pred_df[TARGET_COLS_PRED].values
-    pred_5 = derive_all_targets(pred_3)
+    # Map target_name to prediction index
+    # derive_all_targets returns: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
+    target_to_idx = {
+        "Dry_Green_g": 0,
+        "Dry_Dead_g": 1,
+        "Dry_Clover_g": 2,
+        "GDM_g": 3,
+        "Dry_Total_g": 4,
+    }
 
-    # Create full predictions DataFrame
-    all_targets = ["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]
-    full_pred_df = pd.DataFrame(pred_5, columns=all_targets)
-    full_pred_df["image_id"] = pred_df["image_id"].values
-
-    # Convert to Long format
     submission_rows = []
-    for _, row in full_pred_df.iterrows():
-        image_id = row["image_id"]
-        for target in all_targets:
-            sample_id = f"{image_id}__{target}"
-            submission_rows.append(
-                {
-                    "sample_id": sample_id,
-                    "target": row[target],
-                }
-            )
+    for _, row in test_df.iterrows():
+        sample_id = row["sample_id"]      # Use test_df's sample_id directly
+        image_path = row["image_path"]
+        target_name = row["target_name"]  # Use test_df's target_name directly
 
-    submission_df = pd.DataFrame(submission_rows)
+        # Get prediction for this image
+        pred = predictions[image_path]
+        idx = target_to_idx[target_name]
+        value = pred[idx]
 
-    # Ensure correct order (match sample_submission)
-    submission_df = submission_df.set_index("sample_id")
-    submission_df = submission_df.loc[sample_submission["sample_id"]]
-    submission_df = submission_df.reset_index()
+        submission_rows.append({
+            "sample_id": sample_id,
+            "target": value,
+        })
 
-    return submission_df
+    return pd.DataFrame(submission_rows)
 
 
 def main():
@@ -336,8 +331,8 @@ def main():
     test_df = pd.read_csv(test_csv)
     print(f"Test samples: {len(test_df)}")
 
-    # Run inference
-    pred_df = run_inference(
+    # Run inference (returns dict: image_path -> 5 predictions)
+    predictions = run_inference(
         test_df=test_df,
         image_dir=config.get_image_dir(),
         models=models,
@@ -346,9 +341,8 @@ def main():
         device=device,
     )
 
-    # Create submission
-    sample_submission = pd.read_csv(config.get_sample_submission_path())
-    submission_df = create_submission(pred_df, sample_submission)
+    # Create submission using test_df's sample_id directly
+    submission_df = create_submission(test_df, predictions)
 
     # Save submission
     submission_path = output_dir / "submission.csv"
@@ -357,7 +351,10 @@ def main():
 
     # Also save predictions in wide format for analysis
     pred_path = output_dir / "predictions.csv"
-    pred_df.to_csv(pred_path, index=False)
+    all_targets = ["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]
+    pred_df = pd.DataFrame.from_dict(predictions, orient="index", columns=all_targets)
+    pred_df.index.name = "image_path"
+    pred_df.to_csv(pred_path)
     print(f"Predictions saved to {pred_path}")
 
 
@@ -406,8 +403,8 @@ def kaggle_inference(
     # Load test data
     test_df = pd.read_csv(config.get_test_csv_path())
 
-    # Run inference
-    pred_df = run_inference(
+    # Run inference (returns dict: image_path -> 5 predictions)
+    predictions = run_inference(
         test_df=test_df,
         image_dir=config.get_image_dir(),
         models=models,
@@ -416,9 +413,8 @@ def kaggle_inference(
         device=device,
     )
 
-    # Create submission
-    sample_submission = pd.read_csv(config.get_sample_submission_path())
-    submission_df = create_submission(pred_df, sample_submission)
+    # Create submission using test_df's sample_id directly
+    submission_df = create_submission(test_df, predictions)
 
     return submission_df
 
