@@ -162,3 +162,8 @@ cython_debug/
 data/*
 !data/.gitkeep
 catboost_info
+
+# Claude Code
+.serena/*
+CLAUDE.md
+.claude/*
