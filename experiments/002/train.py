@@ -250,6 +250,7 @@ def plot_training_curves(
     axes[2].set_xlabel("Epoch")
     axes[2].set_ylabel("Weighted R²")
     axes[2].set_title("Validation R²")
+    axes[2].set_ylim(bottom=0)
     axes[2].legend(fontsize=8)
 
     plt.tight_layout()
