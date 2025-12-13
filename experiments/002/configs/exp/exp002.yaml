@@ -1,0 +1,75 @@
+# =============================================================================
+# Experiment 001: Baseline with Dual Input
+# =============================================================================
+# First submission baseline experiment using dual input (left-right split)
+#
+# Architecture:
+#   - Left-right image splitting with shared backbone
+#   - Features concatenated before regression head
+#   - TTA applied to original image before split
+#
+# Goal: Submit successfully with a simple dual-input model
+#
+# Grid Search Parameters:
+#   - backbone: 2 models (EfficientNetV2 B0, B1)
+#   - lr: 2 values (1e-3, 1e-4)
+#   Total: 4 runs
+#
+# =============================================================================
+
+__include__:
+  - "../base/exp_template.yaml"
+
+# Experiment settings
+experiment:
+  name: exp002
+  seed: 42
+  notes: "Baseline experiment with dual input (left-right split)"
+
+# Dataset settings
+dataset:
+  # Paths are resolved by config.py (null = use default from config.py)
+  train_csv: null
+  image_dir: null
+
+  img_size:
+    - 224
+
+# Training settings
+trainer:
+  train_batch_size: 16
+  val_batch_size: 32
+  num_workers: 4
+  num_epochs: 150
+  use_amp: true
+  n_folds: 5
+  fold: null  # Train all folds
+  group_col: site  # GroupKFold grouping column (State + Sampling_Date)
+
+# Optimization settings (grid search)
+optimization:
+  lr:
+    # - 1e-3
+    - 5e-4
+    - 1e-4
+    - 5e-5
+  weight_decay: 1e-4
+  warmup_rate: 0.1
+  use_ema: true
+  ema_decay: 0.997
+
+# Model settings (grid search)
+model:
+  backbone:
+    - convnextv2_tiny.fcmae_ft_in22k_in1k
+    - convnextv2_base.fcmae_ft_in22k_in1k
+    - convnext_tiny.in12k_ft_in1k
+    - convnext_base.fb_in22k_ft_in1k
+  pretrained: true
+  num_outputs: 3
+  dropout: 0.1
+  hidden_size: 512
+
+# Loss function
+loss:
+  beta: 1.0
