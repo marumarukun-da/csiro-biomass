@@ -134,4 +134,10 @@ augmentation:
         - 7
       p: 0.3
 
+  # Mixup augmentation (applied at batch level during training)
+  mixup:
+    enabled: false  # Set to true to enable Mixup
+    alpha: 0.4      # Beta distribution parameter (0.1-0.4 recommended for regression)
+    disable_ratio: 0.2  # Disable Mixup in the last X% of training (e.g., 0.2 = last 20%)
+
   # Validation uses only Resize + Normalize (automatic)

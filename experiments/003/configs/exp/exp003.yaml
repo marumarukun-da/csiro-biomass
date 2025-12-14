@@ -51,9 +51,12 @@ optimization:
   lr:
     # - 1e-3
     # - 5e-4
+    - 2e-4
     - 1e-4
     # - 5e-5
-  weight_decay: 1e-4
+  weight_decay: 
+    - 1e-3
+    - 1e-4
   warmup_rate: 0.1
   use_ema: true
   ema_decay: 0.997
@@ -73,3 +76,12 @@ model:
 # Loss function
 loss:
   beta: 1.0
+
+# Augmentation settings
+augmentation:
+  mixup:
+    enabled: true
+    alpha: 
+      - 0.4
+      - 1.0
+    disable_ratio: 0.2  # Disable Mixup in the last 20% of training

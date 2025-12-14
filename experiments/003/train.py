@@ -41,6 +41,7 @@ from src.data import (
 )
 from src.loss_function import build_loss_function
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_3targets
+from src.mixup import mixup_data
 from src.model import build_model
 from src.seed import seed_everything
 
@@ -284,8 +285,30 @@ def train_one_epoch(
     num_epochs: int,
     global_step: int,
     use_amp: bool,
+    use_mixup: bool = False,
+    mixup_alpha: float = 0.4,
 ) -> tuple[float, int]:
-    """Train for one epoch."""
+    """Train for one epoch.
+
+    Args:
+        model: Model to train
+        train_loader: Training data loader
+        criterion: Loss function
+        optimizer: Optimizer
+        scheduler: Learning rate scheduler
+        scaler: Gradient scaler for AMP
+        ema: EMA model (optional)
+        device: Device for training
+        epoch: Current epoch number
+        num_epochs: Total number of epochs
+        global_step: Global step counter
+        use_amp: Whether to use automatic mixed precision
+        use_mixup: Whether to apply Mixup augmentation
+        mixup_alpha: Beta distribution parameter for Mixup
+
+    Returns:
+        tuple of (train_loss, global_step)
+    """
     model.train()
     train_loss_sum = 0.0
     train_samples = 0
@@ -296,6 +319,10 @@ def train_one_epoch(
         images_left = batch["image_left"].to(device)
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
+
+        # Apply Mixup if enabled
+        if use_mixup:
+            images_left, images_right, targets, _ = mixup_data(images_left, images_right, targets, alpha=mixup_alpha)
 
         optimizer.zero_grad(set_to_none=True)
 
@@ -386,6 +413,12 @@ def train_single_fold(
         img_size = img_size[0]
     in_chans = dataset_cfg.get("in_chans", 3)
     target_cols = dataset_cfg.get("target_cols", TARGET_COLS_PRED)
+
+    # Mixup settings
+    mixup_cfg = aug_cfg.get("mixup", {})
+    mixup_enabled = mixup_cfg.get("enabled", False)
+    mixup_alpha = mixup_cfg.get("alpha", 0.4)
+    mixup_disable_ratio = mixup_cfg.get("disable_ratio", 0.2)
 
     # Split data
     train_fold_df = train_df[train_df["fold"] != fold].reset_index(drop=True)
@@ -507,6 +540,13 @@ def train_single_fold(
         ema = ModelEmaV3(model, decay=ema_decay, update_after_step=update_after_step)
         logger.info(f"EMA enabled: decay={ema_decay}")
 
+    # Log Mixup settings
+    if mixup_enabled:
+        mixup_end_epoch = int(num_epochs * (1 - mixup_disable_ratio))
+        logger.info(f"Mixup enabled: alpha={mixup_alpha}, active for epochs 1-{mixup_end_epoch}")
+    else:
+        logger.info("Mixup disabled")
+
     # Training loop
     history = {"train_loss": [], "val_loss": [], "val_r2": []}
     best_val_r2 = -float("inf")
@@ -518,6 +558,10 @@ def train_single_fold(
     weights_dir.mkdir(exist_ok=True)
 
     for epoch in range(1, num_epochs + 1):
+        # Determine if Mixup should be applied this epoch
+        # Mixup is disabled in the last `mixup_disable_ratio` portion of training
+        use_mixup_this_epoch = mixup_enabled and (epoch <= num_epochs * (1 - mixup_disable_ratio))
+
         # Train
         train_loss, global_step = train_one_epoch(
             model,
@@ -532,6 +576,8 @@ def train_single_fold(
             num_epochs,
             global_step,
             use_amp,
+            use_mixup=use_mixup_this_epoch,
+            mixup_alpha=mixup_alpha,
         )
 
         # Validate (use EMA model if available)
@@ -550,8 +596,10 @@ def train_single_fold(
         history["val_loss"].append(val_loss)
         history["val_r2"].append(val_r2)
 
+        # Log with Mixup status
+        mixup_status = "[mixup]" if use_mixup_this_epoch else "[no mixup]"
         logger.info(
-            f"Epoch {epoch}/{num_epochs} - train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}"
+            f"Epoch {epoch}/{num_epochs} {mixup_status} - train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}"
         )
 
         # Save best model (by val_loss to avoid spike selection)
@@ -622,6 +670,8 @@ def train_single_run(
 
     # Convert Long to Wide format
     train_df = convert_long_to_wide(train_df)
+    # Sort by image_id to ensure reproducible GroupKFold splits
+    train_df = train_df.sort_values(by=["image_id"]).reset_index(drop=True)
     logger.info(f"Data loaded: {len(train_df)} images")
 
     # Create folds using GroupKFold
@@ -652,7 +702,9 @@ def train_single_run(
         fold_results.append(result)
         all_histories.append(result["history"])
 
-        logger.info(f"Fold {fold} - Best val_loss: {result['best_val_loss']:.5f}, R²: {result['best_val_r2']:.5f} (epoch {result['best_epoch']})")
+        logger.info(
+            f"Fold {fold} - Best val_loss: {result['best_val_loss']:.5f}, R²: {result['best_val_r2']:.5f} (epoch {result['best_epoch']})"
+        )
 
     # Calculate average metrics
     avg_r2 = np.mean([r["best_val_r2"] for r in fold_results])
@@ -792,7 +844,9 @@ def main() -> None:
     print("\n" + "=" * 60)
     print(f"Experiment outputs: {experiment_dir}")
     print(f"Summary: {summary_csv}")
-    print(f"Best run: {best_summary.get('run_name')} (val_loss={best_summary.get('avg_val_loss'):.5f}, R²={best_summary.get('avg_val_r2'):.5f})")
+    print(
+        f"Best run: {best_summary.get('run_name')} (val_loss={best_summary.get('avg_val_loss'):.5f}, R²={best_summary.get('avg_val_r2'):.5f})"
+    )
 
 
 if __name__ == "__main__":
