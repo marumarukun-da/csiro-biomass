@@ -63,59 +63,6 @@ else:
 ARTIFACT_EXP_DIR = lambda exp_name: ARTIFACT_DIR / exp_name / "1"  # noqa: E731
 
 
-# ---------- # EXPERIMENT CONFIG # ---------- #
-class CFG:
-    """Default configuration values.
-
-    These can be overridden by YAML config files.
-    """
-
-    # General
-    SEED = 42
-    N_FOLDS = 5
-    DEVICE = "cuda"
-
-    # Paths
-    DATA_PATH = COMP_DATASET_DIR
-    OUTPUT_PATH = OUTPUT_DIR
-    MODEL_PATH = OUTPUT_DIR / "models"
-
-    # Target configuration
-    TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
-    TARGET_COLS_ALL = ["Dry_Green_g", "Dry_Dead_g", "Dry_Clover_g", "GDM_g", "Dry_Total_g"]
-    TARGET_WEIGHTS = {
-        "Dry_Total_g": 0.5,
-        "GDM_g": 0.2,
-        "Dry_Green_g": 0.1,
-        "Dry_Dead_g": 0.1,
-        "Dry_Clover_g": 0.1,
-    }
-
-    # Model
-    MODEL_NAME = "tf_efficientnetv2_b0.in1k"
-    PRETRAINED = True
-    NUM_OUTPUTS = 3
-
-    # Training
-    EPOCHS = 30
-    BATCH_SIZE = 32
-    LEARNING_RATE = 1e-4
-    WEIGHT_DECAY = 1e-4
-    WARMUP_RATE = 0.1
-
-    # Image
-    IMG_SIZE = 512
-    IN_CHANS = 3
-    SPLIT_IMAGE = False
-
-    # Hardware
-    NUM_WORKERS = 4
-    USE_AMP = True
-
-    # Inference
-    TTA = True
-
-
 # ---------- # HELPER FUNCTIONS # ---------- #
 def get_train_csv_path() -> Path:
     """Get path to training CSV."""
