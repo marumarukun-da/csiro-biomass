@@ -19,6 +19,7 @@ dataset:
 trainer:
   train_batch_size: 8
   val_batch_size: 16
+  gradient_accumulation_steps: 2  # Effective batch size = 8 * 2 = 16
   num_workers: 4
   num_epochs: 150
   use_amp: true
@@ -35,8 +36,9 @@ optimization:
     - 1e-4
     # - 5e-5
   weight_decay: 
+    - 1e-2
     - 1e-3
-    - 1e-4
+    # - 1e-4
   warmup_rate: 0.1
   use_ema: true
   ema_decay: 0.997

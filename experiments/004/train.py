@@ -287,6 +287,7 @@ def train_one_epoch(
     use_amp: bool,
     use_mixup: bool = False,
     mixup_alpha: float = 0.4,
+    gradient_accumulation_steps: int = 1,
 ) -> tuple[float, int]:
     """Train for one epoch.
 
@@ -305,6 +306,7 @@ def train_one_epoch(
         use_amp: Whether to use automatic mixed precision
         use_mixup: Whether to apply Mixup augmentation
         mixup_alpha: Beta distribution parameter for Mixup
+        gradient_accumulation_steps: Number of steps to accumulate gradients
 
     Returns:
         tuple of (train_loss, global_step)
@@ -314,7 +316,10 @@ def train_one_epoch(
     train_samples = 0
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [train]", leave=False)
-    for batch in pbar:
+
+    optimizer.zero_grad(set_to_none=True)
+
+    for step, batch in enumerate(pbar):
         targets = batch["targets"].to(device)
         images_left = batch["image_left"].to(device)
         images_right = batch["image_right"].to(device)
@@ -324,25 +329,41 @@ def train_one_epoch(
         if use_mixup:
             images_left, images_right, targets, _ = mixup_data(images_left, images_right, targets, alpha=mixup_alpha)
 
-        optimizer.zero_grad(set_to_none=True)
-
         with autocast(device_type=device.type, enabled=use_amp):
             preds = model(images_left, images_right)
             loss = criterion(preds, targets)
+            # Scale loss for gradient accumulation
+            scaled_loss = loss / gradient_accumulation_steps
 
-        scaler.scale(loss).backward()
+        scaler.scale(scaled_loss).backward()
+
+        # Update weights after accumulation steps
+        if (step + 1) % gradient_accumulation_steps == 0:
+            scaler.step(optimizer)
+            scaler.update()
+            optimizer.zero_grad(set_to_none=True)
+            scheduler.step()
+
+            global_step += 1
+            if ema is not None:
+                ema.update(model, step=global_step)
+
+        train_samples += batch_size
+        train_loss_sum += float(loss.item()) * batch_size  # Use original (unscaled) loss for logging
+
+        pbar.set_postfix({"loss": f"{train_loss_sum / train_samples:.4f}"})
+
+    # Handle remaining gradients at the end of epoch
+    remaining_steps = len(train_loader) % gradient_accumulation_steps
+    if remaining_steps != 0:
         scaler.step(optimizer)
         scaler.update()
+        optimizer.zero_grad(set_to_none=True)
         scheduler.step()
 
         global_step += 1
         if ema is not None:
             ema.update(model, step=global_step)
-
-        train_samples += batch_size
-        train_loss_sum += float(loss.item()) * batch_size
-
-        pbar.set_postfix({"loss": f"{train_loss_sum / train_samples:.4f}"})
 
     train_loss = train_loss_sum / max(train_samples, 1)
     return train_loss, global_step
@@ -512,7 +533,13 @@ def train_single_fold(
 
     # Optimizer and scheduler
     num_epochs = trainer_cfg.get("num_epochs", 30)
-    total_steps = len(train_loader) * num_epochs
+    gradient_accumulation_steps = trainer_cfg.get("gradient_accumulation_steps", 1)
+    # Calculate total optimizer steps (considering gradient accumulation)
+    steps_per_epoch = len(train_loader) // gradient_accumulation_steps
+    # Account for remaining steps at end of epoch
+    if len(train_loader) % gradient_accumulation_steps != 0:
+        steps_per_epoch += 1
+    total_steps = steps_per_epoch * num_epochs
     lr = optimization_cfg.get("lr", 1e-4)
     weight_decay = optimization_cfg.get("weight_decay", 1e-4)
 
@@ -539,6 +566,13 @@ def train_single_fold(
         update_after_step = int(total_steps * ema_start_ratio)
         ema = ModelEmaV3(model, decay=ema_decay, update_after_step=update_after_step)
         logger.info(f"EMA enabled: decay={ema_decay}")
+
+    # Log gradient accumulation settings
+    effective_batch_size = trainer_cfg.get("train_batch_size", 32) * gradient_accumulation_steps
+    logger.info(
+        f"Gradient accumulation: steps={gradient_accumulation_steps}, "
+        f"effective_batch_size={effective_batch_size}, total_optimizer_steps={total_steps}"
+    )
 
     # Log Mixup settings
     if mixup_enabled:
@@ -578,6 +612,7 @@ def train_single_fold(
             use_amp,
             use_mixup=use_mixup_this_epoch,
             mixup_alpha=mixup_alpha,
+            gradient_accumulation_steps=gradient_accumulation_steps,
         )
 
         # Validate (use EMA model if available)

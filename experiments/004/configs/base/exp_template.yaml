@@ -52,6 +52,7 @@ trainer:
   # Batch sizes
   train_batch_size: 32
   val_batch_size: 64
+  gradient_accumulation_steps: 1  # Effective batch size = train_batch_size * gradient_accumulation_steps
 
   # Workers
   num_workers: 4
