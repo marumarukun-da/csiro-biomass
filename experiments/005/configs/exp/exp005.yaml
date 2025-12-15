@@ -1,0 +1,70 @@
+__include__:
+  - "../base/exp_template.yaml"
+
+# Experiment settings
+experiment:
+  name: exp005
+  seed: 42
+
+# Dataset settings
+dataset:
+  # Paths are resolved by config.py (null = use default from config.py)
+  train_csv: null
+  image_dir: null
+
+  img_size:
+    - 512
+
+# Training settings
+trainer:
+  train_batch_size: 2
+  val_batch_size: 8
+  gradient_accumulation_steps: 8  # Effective batch size = 2 * 8 = 16
+  num_workers: 4
+  num_epochs: 200
+  use_amp: true
+  n_folds: 5
+  fold: null  # Train all folds
+  group_col: site  # GroupKFold grouping column (State + Sampling_Date)
+
+# Optimization settings (grid search)
+optimization:
+  lr:
+    # - 1e-3
+    # - 5e-4
+    # - 2e-4
+    # - 1e-4
+    - 5e-5
+  weight_decay: 
+    # - 1e-2
+    - 1e-3
+    # - 1e-4
+  warmup_rate: 0.1
+  use_ema: true
+  ema_decay: 0.997
+
+# Model settings (grid search)
+model:
+  backbone:
+    # - convnextv2_tiny.fcmae_ft_in22k_in1k
+    - convnextv2_base.fcmae_ft_in22k_in1k
+    # - convnext_tiny.in12k_ft_in1k
+    # - convnext_base.fb_in22k_ft_in1k
+  pretrained: true
+  num_outputs: 3
+  dropout: 0.1
+  hidden_size: 512
+
+# Loss function
+loss:
+  beta: 1.0
+
+# Augmentation settings
+augmentation:
+  mixup:
+    enabled: true
+    alpha: 
+      # - 0.4
+      # - 1.0
+      - 2.0
+    disable_ratio: 0.2  # Disable Mixup in the last 20% of training
