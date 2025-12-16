@@ -168,6 +168,12 @@ def build_pre_split_transform(
     coarse_dropout_hole_width_range: tuple[int, int] = (20, 100),
     gaussian_blur_p: float = 0.3,
     gaussian_blur_limit: tuple[int, int] = (3, 7),
+    hue_shift_limit: int = 10,
+    sat_shift_limit: int = 20,
+    val_shift_limit: int = 20,
+    hue_saturation_value_p: float = 0.5,
+    gamma_limit: tuple[int, int] = (60, 140),
+    random_gamma_p: float = 0.5,
 ) -> A.Compose:
     """Build pre-split augmentation (applied to entire image before splitting).
 
@@ -176,6 +182,8 @@ def build_pre_split_transform(
     - Color augmentations (applied consistently to both halves)
     - CoarseDropout (random rectangular regions dropped)
     - GaussianBlur (random blur effect)
+    - HueSaturationValue (color variation for robustness)
+    - RandomGamma (exposure variation simulation)
     - NO resize (resize happens after split)
 
     Args:
@@ -190,6 +198,12 @@ def build_pre_split_transform(
         coarse_dropout_hole_width_range: Range of hole width (min, max)
         gaussian_blur_p: Probability of gaussian blur
         gaussian_blur_limit: Blur kernel size range (min, max)
+        hue_shift_limit: Hue shift limit for HueSaturationValue
+        sat_shift_limit: Saturation shift limit for HueSaturationValue
+        val_shift_limit: Value shift limit for HueSaturationValue
+        hue_saturation_value_p: Probability of HueSaturationValue
+        gamma_limit: Gamma limit range (min, max) for RandomGamma
+        random_gamma_p: Probability of RandomGamma
 
     Returns:
         Albumentations Compose object
@@ -201,6 +215,16 @@ def build_pre_split_transform(
             brightness_limit=brightness_limit,
             contrast_limit=contrast_limit,
             p=brightness_contrast_p,
+        ),
+        A.HueSaturationValue(
+            hue_shift_limit=hue_shift_limit,
+            sat_shift_limit=sat_shift_limit,
+            val_shift_limit=val_shift_limit,
+            p=hue_saturation_value_p,
+        ),
+        A.RandomGamma(
+            gamma_limit=gamma_limit,
+            p=random_gamma_p,
         ),
         A.CoarseDropout(
             num_holes_range=coarse_dropout_num_holes_range,
@@ -221,10 +245,13 @@ def build_post_split_transform(
     img_size: int = 224,
     normalize_mean: list[float] | None = None,
     normalize_std: list[float] | None = None,
+    is_train: bool = False,
+    random_rotate90_p: float = 0.3,
 ) -> A.Compose:
     """Build post-split transform (applied to each half after splitting).
 
     This includes:
+    - RandomRotate90 (training only, applied independently to each half)
     - Resize to target size
     - Normalization
     - Convert to tensor
@@ -233,6 +260,8 @@ def build_post_split_transform(
         img_size: Target image size
         normalize_mean: Normalization mean (default: ImageNet)
         normalize_std: Normalization std (default: ImageNet)
+        is_train: Whether this is for training (enables RandomRotate90)
+        random_rotate90_p: Probability of RandomRotate90 (training only)
 
     Returns:
         Albumentations Compose object
@@ -242,11 +271,19 @@ def build_post_split_transform(
     if normalize_std is None:
         normalize_std = [0.229, 0.224, 0.225]
 
-    transforms = [
-        A.Resize(img_size, img_size, interpolation=cv2.INTER_AREA),
-        A.Normalize(mean=normalize_mean, std=normalize_std, max_pixel_value=255.0),
-        ToTensorV2(),
-    ]
+    transforms = []
+
+    # RandomRotate90 only for training (applied before resize)
+    if is_train:
+        transforms.append(A.RandomRotate90(p=random_rotate90_p))
+
+    transforms.extend(
+        [
+            A.Resize(img_size, img_size, interpolation=cv2.INTER_AREA),
+            A.Normalize(mean=normalize_mean, std=normalize_std, max_pixel_value=255.0),
+            ToTensorV2(),
+        ]
+    )
 
     return A.Compose(transforms)
 

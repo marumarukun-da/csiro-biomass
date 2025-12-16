@@ -134,6 +134,18 @@ augmentation:
         - 3
         - 7
       p: 0.3
+    hue_saturation_value:
+      hue_shift_limit: 10
+      sat_shift_limit: 20
+      val_shift_limit: 20
+      p: 0.5
+    random_gamma:
+      gamma_limit:
+        - 60
+        - 140
+      p: 0.5
+    random_rotate90:
+      p: 0.3
 
   # Mixup augmentation (applied at batch level during training)
   mixup:

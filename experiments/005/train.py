@@ -457,6 +457,9 @@ def train_single_fold(
     # Pre-split + post-split transforms
     coarse_dropout_cfg = train_aug_cfg.get("coarse_dropout", {})
     gaussian_blur_cfg = train_aug_cfg.get("gaussian_blur", {})
+    hue_saturation_value_cfg = train_aug_cfg.get("hue_saturation_value", {})
+    random_gamma_cfg = train_aug_cfg.get("random_gamma", {})
+    random_rotate90_cfg = train_aug_cfg.get("random_rotate90", {})
     pre_split_transform = build_pre_split_transform(
         horizontal_flip_p=train_aug_cfg.get("horizontal_flip", {}).get("p", 0.5),
         vertical_flip_p=train_aug_cfg.get("vertical_flip", {}).get("p", 0.5),
@@ -469,18 +472,34 @@ def train_single_fold(
         coarse_dropout_hole_width_range=tuple(coarse_dropout_cfg.get("hole_width_range", [20, 100])),
         gaussian_blur_p=gaussian_blur_cfg.get("p", 0.3),
         gaussian_blur_limit=tuple(gaussian_blur_cfg.get("blur_limit", [3, 7])),
+        hue_shift_limit=hue_saturation_value_cfg.get("hue_shift_limit", 10),
+        sat_shift_limit=hue_saturation_value_cfg.get("sat_shift_limit", 20),
+        val_shift_limit=hue_saturation_value_cfg.get("val_shift_limit", 20),
+        hue_saturation_value_p=hue_saturation_value_cfg.get("p", 0.5),
+        gamma_limit=tuple(random_gamma_cfg.get("gamma_limit", [60, 140])),
+        random_gamma_p=random_gamma_cfg.get("p", 0.5),
     )
-    post_split_transform = build_post_split_transform(
+    # Training post-split transform (with RandomRotate90)
+    post_split_transform_train = build_post_split_transform(
         img_size=img_size,
         normalize_mean=normalize_cfg.get("mean"),
         normalize_std=normalize_cfg.get("std"),
+        is_train=True,
+        random_rotate90_p=random_rotate90_cfg.get("p", 0.3),
+    )
+    # Validation post-split transform (no augmentation)
+    post_split_transform_valid = build_post_split_transform(
+        img_size=img_size,
+        normalize_mean=normalize_cfg.get("mean"),
+        normalize_std=normalize_cfg.get("std"),
+        is_train=False,
     )
 
     train_dataset = DualInputBiomassDataset(
         df=train_fold_df,
         image_dir=image_dir,
         pre_split_transform=pre_split_transform,
-        post_split_transform=post_split_transform,
+        post_split_transform=post_split_transform_train,
         target_cols=target_cols,
         image_col=image_col,
         is_train=True,
@@ -489,7 +508,7 @@ def train_single_fold(
         df=valid_fold_df,
         image_dir=image_dir,
         pre_split_transform=build_pre_split_transform_valid(),  # No augmentation
-        post_split_transform=post_split_transform,
+        post_split_transform=post_split_transform_valid,
         target_cols=target_cols,
         image_col=image_col,
         is_train=True,
