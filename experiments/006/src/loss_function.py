@@ -19,13 +19,13 @@ class WeightedSmoothL1Loss(nn.Module):
         """Initialize WeightedSmoothL1Loss.
 
         Args:
-            weights: Weights for each target [Dry_Total_g, GDM_g, Dry_Green_g].
-                     If None, uses competition metric weights [0.5, 0.2, 0.1].
+            weights: Weights for each target [Dry_Dead_g, Dry_Green_g, Dry_Clover_g].
+                     If None, uses equal weights [1.0, 1.0, 1.0].
             beta: Threshold for switching between L1 and L2 behavior.
         """
         super().__init__()
         self.beta = beta
-        self.weights = weights if weights is not None else [0.5, 0.2, 0.1]
+        self.weights = weights if weights is not None else [1.0, 1.0, 1.0]
 
     def forward(self, preds, targets):
         """Calculate weighted smooth L1 loss.
@@ -55,7 +55,7 @@ def build_loss_function(
     """Build loss function.
 
     Args:
-        weights: Target weights [Dry_Total_g, GDM_g, Dry_Green_g]
+        weights: Target weights [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
         beta: Smooth L1 beta parameter
 
     Returns:

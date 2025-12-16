@@ -13,27 +13,27 @@ TARGET_WEIGHTS = {
 }
 
 # Columns we actually predict (others are derived)
-TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
+TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
 
 
 def derive_all_targets(preds_3: np.ndarray) -> np.ndarray:
     """Derive all 5 target values from 3 predicted values.
 
     Args:
-        preds_3: Array of shape [N, 3] with columns [Dry_Total_g, GDM_g, Dry_Green_g]
+        preds_3: Array of shape [N, 3] with columns [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
 
     Returns:
         Array of shape [N, 5] with columns [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
     """
-    Dry_Total_g = preds_3[:, 0]
-    GDM_g = preds_3[:, 1]
-    Dry_Green_g = preds_3[:, 2]
+    Dry_Dead_g = preds_3[:, 0]
+    Dry_Green_g = preds_3[:, 1]
+    Dry_Clover_g = preds_3[:, 2]
 
     # Derive remaining targets
-    # Dry_Dead_g = Dry_Total_g - GDM_g
-    # Dry_Clover_g = GDM_g - Dry_Green_g
-    Dry_Dead_g = np.maximum(Dry_Total_g - GDM_g, 0)
-    Dry_Clover_g = np.maximum(GDM_g - Dry_Green_g, 0)
+    # GDM_g = Dry_Green_g + Dry_Clover_g
+    # Dry_Total_g = Dry_Dead_g + GDM_g = Dry_Dead_g + Dry_Green_g + Dry_Clover_g
+    GDM_g = Dry_Green_g + Dry_Clover_g
+    Dry_Total_g = Dry_Dead_g + GDM_g
 
     # Return in TARGET_COLS_ALL order
     return np.stack([Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g], axis=1)
@@ -97,7 +97,7 @@ def weighted_r2_score_3targets(
     This is useful during training when we only predict 3 values.
 
     Args:
-        y_true: Ground truth values, shape [N, 3] with [Dry_Total_g, GDM_g, Dry_Green_g]
+        y_true: Ground truth values, shape [N, 3] with [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
         y_pred: Predicted values, shape [N, 3]
 
     Returns:

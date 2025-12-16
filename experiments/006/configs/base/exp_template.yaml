@@ -43,9 +43,9 @@ dataset:
 
   # Target columns to predict
   target_cols:
-    - Dry_Total_g
-    - GDM_g
+    - Dry_Dead_g
     - Dry_Green_g
+    - Dry_Clover_g
 
 # Training settings
 trainer:
@@ -89,11 +89,11 @@ model:
 loss:
   beta: 1.0  # Smooth L1 beta parameter
 
-  # Target weights (based on competition metric)
+  # Target weights (equal weights for component prediction)
   weights:
-    Dry_Total_g: 0.5
-    GDM_g: 0.2
-    Dry_Green_g: 0.1
+    Dry_Dead_g: 1.0
+    Dry_Green_g: 1.0
+    Dry_Clover_g: 1.0
 
 # Augmentation settings
 augmentation:

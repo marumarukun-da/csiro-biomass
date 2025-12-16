@@ -234,11 +234,11 @@ def run_inference(
             raise FileNotFoundError(f"Cannot read image: {full_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Predict (3 values: Dry_Total_g, GDM_g, Dry_Green_g)
+        # Predict (3 values: Dry_Dead_g, Dry_Green_g, Dry_Clover_g)
         pred_3 = predict_single_image(image, models, tta_transforms, post_split_transform, device)
 
         # Derive all 5 targets from 3 predictions
-        # Input: [Dry_Total_g, GDM_g, Dry_Green_g]
+        # Input: [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
         # Output: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
         pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
 

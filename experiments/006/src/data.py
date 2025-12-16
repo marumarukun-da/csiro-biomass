@@ -10,7 +10,7 @@ from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, Dataset
 
 # Target columns we predict
-TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
+TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
 
 
 def convert_long_to_wide(df: pd.DataFrame) -> pd.DataFrame:
