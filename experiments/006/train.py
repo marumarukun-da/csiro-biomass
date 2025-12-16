@@ -40,7 +40,7 @@ from src.data import (
     convert_long_to_wide,
 )
 from src.loss_function import build_loss_function
-from src.metric import TARGET_COLS_PRED, weighted_r2_score_3targets
+from src.metric import TARGET_COLS_PRED, weighted_r2_score_full
 from src.mixup import mixup_data
 from src.model import build_model
 from src.seed import seed_everything
@@ -403,10 +403,10 @@ def validate(
 
     val_loss = val_loss_sum / max(val_samples, 1)
 
-    # Calculate R² score
+    # Calculate R² score (using all 5 targets to match LB metric)
     all_preds = np.concatenate(all_preds, axis=0)
     all_targets = np.concatenate(all_targets, axis=0)
-    val_r2 = weighted_r2_score_3targets(all_targets, all_preds)
+    val_r2 = weighted_r2_score_full(all_targets, all_preds)
 
     return val_loss, val_r2, all_preds, all_targets
 
