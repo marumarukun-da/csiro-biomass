@@ -39,7 +39,7 @@ from src.data import (
     build_pre_split_transform_valid,
     convert_long_to_wide,
 )
-from src.loss_function import build_loss_function
+from src.loss_function import build_gaussian_nll_loss_function
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_full
 from src.mixup import mixup_data
 from src.model import build_model
@@ -330,8 +330,8 @@ def train_one_epoch(
             images_left, images_right, targets, _ = mixup_data(images_left, images_right, targets, alpha=mixup_alpha)
 
         with autocast(device_type=device.type, enabled=use_amp):
-            preds = model(images_left, images_right)
-            loss = criterion(preds, targets)
+            means, variances = model(images_left, images_right)
+            loss = criterion(means, variances, targets)
             # Scale loss for gradient accumulation
             scaled_loss = loss / gradient_accumulation_steps
 
@@ -392,13 +392,14 @@ def validate(
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
 
-        preds = model(images_left, images_right)
-        loss = criterion(preds, targets)
+        means, variances = model(images_left, images_right)
+        loss = criterion(means, variances, targets)
 
         val_loss_sum += float(loss.item()) * batch_size
         val_samples += batch_size
 
-        all_preds.append(preds.cpu().numpy())
+        # Use mean values for evaluation (ignore variance)
+        all_preds.append(means.cpu().numpy())
         all_targets.append(targets.cpu().numpy())
 
     val_loss = val_loss_sum / max(val_samples, 1)
@@ -542,12 +543,12 @@ def train_single_fold(
         device=device,
     )
 
-    # Build loss function (TotalAwareLoss)
-    criterion = build_loss_function(
-        beta=loss_cfg.get("beta", 1.0),
+    # Build loss function (TotalAwareGaussianNLLLoss)
+    criterion = build_gaussian_nll_loss_function(
         component_weight=loss_cfg.get("component_weight", 0.3),
         total_weight=loss_cfg.get("total_weight", 0.5),
         gdm_weight=loss_cfg.get("gdm_weight", 0.2),
+        eps=loss_cfg.get("eps", 1e-6),
     )
 
     # Optimizer and scheduler

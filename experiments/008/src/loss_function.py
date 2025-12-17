@@ -1,5 +1,6 @@
 """Loss function for biomass regression."""
 
+import torch
 import torch.nn.functional as F
 from torch import nn
 
@@ -117,11 +118,7 @@ class TotalAwareLoss(nn.Module):
         loss_components = (loss_dead + loss_green + loss_clover) / 3.0
 
         # Combined loss
-        loss = (
-            self.component_weight * loss_components
-            + self.total_weight * loss_total
-            + self.gdm_weight * loss_gdm
-        )
+        loss = self.component_weight * loss_components + self.total_weight * loss_total + self.gdm_weight * loss_gdm
 
         return loss
 
@@ -148,4 +145,119 @@ def build_loss_function(
         total_weight=total_weight,
         gdm_weight=gdm_weight,
         beta=beta,
+    )
+
+
+class TotalAwareGaussianNLLLoss(nn.Module):
+    """Gaussian NLL Loss that explicitly optimizes for Total and GDM.
+
+    This loss uses Gaussian Negative Log-Likelihood instead of Smooth L1.
+    It allows the model to learn both predictions (mean) and their uncertainties (variance).
+
+    The weights align with the competition metric where:
+    - Dry_Total_g has weight 0.5
+    - GDM_g has weight 0.2
+    - Individual components (Dead, Green, Clover) have weight 0.1 each
+
+    For combined targets (Total, GDM), variance is computed assuming independence:
+    Var(A + B) = Var(A) + Var(B)
+
+    Key benefit:
+    - Samples that are hard to predict will have larger variance, reducing their loss contribution
+    - Easy samples will have smaller variance, forcing the model to predict them accurately
+    """
+
+    def __init__(
+        self,
+        component_weight: float = 0.3,
+        total_weight: float = 0.5,
+        gdm_weight: float = 0.2,
+        eps: float = 1e-6,
+    ):
+        """Initialize TotalAwareGaussianNLLLoss.
+
+        Args:
+            component_weight: Total weight for 3 individual components (split equally).
+                              Default 0.3 means each component gets ~0.1.
+            total_weight: Weight for Total (Dead + Green + Clover) loss.
+                          Default 0.5 (matching competition metric).
+            gdm_weight: Weight for GDM (Green + Clover) loss.
+                        Default 0.2 (matching competition metric).
+            eps: Small value for numerical stability in variance.
+        """
+        super().__init__()
+        self.component_weight = component_weight
+        self.total_weight = total_weight
+        self.gdm_weight = gdm_weight
+        self.eps = eps
+
+        # PyTorch's GaussianNLLLoss
+        self.gaussian_nll = nn.GaussianNLLLoss(eps=eps, reduction="mean")
+
+    def forward(
+        self,
+        means: torch.Tensor,
+        variances: torch.Tensor,
+        targets: torch.Tensor,
+    ) -> torch.Tensor:
+        """Calculate total-aware Gaussian NLL loss.
+
+        Args:
+            means: Predicted means [B, 3] with [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
+            variances: Predicted variances [B, 3]
+            targets: Ground truth [B, 3]
+
+        Returns:
+            Combined loss (scalar)
+        """
+        # Individual component losses
+        loss_dead = self.gaussian_nll(means[:, 0], targets[:, 0], variances[:, 0])
+        loss_green = self.gaussian_nll(means[:, 1], targets[:, 1], variances[:, 1])
+        loss_clover = self.gaussian_nll(means[:, 2], targets[:, 2], variances[:, 2])
+
+        # Total = Dead + Green + Clover
+        # Mean: sum of means
+        # Variance: sum of variances (independent assumption)
+        mean_total = means.sum(dim=1)
+        var_total = variances.sum(dim=1)
+        true_total = targets.sum(dim=1)
+        loss_total = self.gaussian_nll(mean_total, true_total, var_total)
+
+        # GDM = Green + Clover
+        mean_gdm = means[:, 1] + means[:, 2]
+        var_gdm = variances[:, 1] + variances[:, 2]
+        true_gdm = targets[:, 1] + targets[:, 2]
+        loss_gdm = self.gaussian_nll(mean_gdm, true_gdm, var_gdm)
+
+        # Component loss (average of 3 components)
+        loss_components = (loss_dead + loss_green + loss_clover) / 3.0
+
+        # Combined loss
+        loss = self.component_weight * loss_components + self.total_weight * loss_total + self.gdm_weight * loss_gdm
+
+        return loss
+
+
+def build_gaussian_nll_loss_function(
+    component_weight: float = 0.3,
+    total_weight: float = 0.5,
+    gdm_weight: float = 0.2,
+    eps: float = 1e-6,
+) -> nn.Module:
+    """Build TotalAwareGaussianNLLLoss function.
+
+    Args:
+        component_weight: Weight for individual components (Dead, Green, Clover).
+        total_weight: Weight for Total (Dead + Green + Clover) loss.
+        gdm_weight: Weight for GDM (Green + Clover) loss.
+        eps: Small value for numerical stability in variance.
+
+    Returns:
+        TotalAwareGaussianNLLLoss module
+    """
+    return TotalAwareGaussianNLLLoss(
+        component_weight=component_weight,
+        total_weight=total_weight,
+        gdm_weight=gdm_weight,
+        eps=eps,
     )

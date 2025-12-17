@@ -188,10 +188,10 @@ def predict_single_image(
         left_tensor = post_split_transform(image=image_left)["image"].unsqueeze(0).to(device)
         right_tensor = post_split_transform(image=image_right)["image"].unsqueeze(0).to(device)
 
-        # 4. Predict with each model
+        # 4. Predict with each model (use mean values only, ignore variance)
         for model in models:
-            pred = model(left_tensor, right_tensor)
-            all_preds.append(pred.cpu().numpy()[0])
+            means, variances = model(left_tensor, right_tensor)
+            all_preds.append(means.cpu().numpy()[0])
 
     # Average all predictions
     return np.mean(all_preds, axis=0)

@@ -102,12 +102,13 @@ class DualInputRegressionNet(nn.Module):
         self.global_pool = GeM(p_trainable=True)
 
         # Regression head (input: 2 * num_features from concatenated left+right)
+        # Output: num_outputs * 2 (mean and variance for each target)
         self.head = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(self.num_features * 2, hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size, num_outputs),
+            nn.Linear(hidden_size, num_outputs * 2),
         )
 
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
@@ -132,7 +133,7 @@ class DualInputRegressionNet(nn.Module):
 
         return pooled
 
-    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> torch.Tensor:
+    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass with dual inputs.
 
         Args:
@@ -140,7 +141,9 @@ class DualInputRegressionNet(nn.Module):
             x_right: Right half images [B, C, H, W]
 
         Returns:
-            Predictions [B, num_outputs] (non-negative via Softplus)
+            Tuple of (means, variances):
+            - means [B, num_outputs]: Predicted mean values (non-negative via Softplus)
+            - variances [B, num_outputs]: Predicted variances (positive via Softplus + eps)
         """
         # Extract features from both sides (shared backbone)
         feat_left = self._extract_features(x_left)
@@ -152,10 +155,17 @@ class DualInputRegressionNet(nn.Module):
         # Regression head
         output = self.head(feat_concat)
 
-        # Apply Softplus for non-negative constraint (biomass values are always >= 0)
-        output = F.softplus(output)
+        # Split into mean and variance
+        means = output[:, : self.num_outputs]
+        variances = output[:, self.num_outputs :]
 
-        return output
+        # Apply Softplus for non-negative constraints
+        # Mean: non-negative (biomass values are always >= 0)
+        # Variance: positive (with eps for numerical stability)
+        means = F.softplus(means)
+        variances = F.softplus(variances) + 1e-6
+
+        return means, variances
 
 
 def build_model(
