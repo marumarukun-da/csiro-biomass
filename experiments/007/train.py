@@ -542,12 +542,12 @@ def train_single_fold(
         device=device,
     )
 
-    # Build loss function
-    loss_weights = loss_cfg.get("weights", {})
-    weights_list = [loss_weights.get(col, 1.0) for col in target_cols]
+    # Build loss function (TotalAwareLoss)
     criterion = build_loss_function(
-        weights=weights_list,
         beta=loss_cfg.get("beta", 1.0),
+        component_weight=loss_cfg.get("component_weight", 0.3),
+        total_weight=loss_cfg.get("total_weight", 0.5),
+        gdm_weight=loss_cfg.get("gdm_weight", 0.2),
     )
 
     # Optimizer and scheduler

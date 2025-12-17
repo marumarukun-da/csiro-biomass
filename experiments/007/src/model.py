@@ -140,7 +140,7 @@ class DualInputRegressionNet(nn.Module):
             x_right: Right half images [B, C, H, W]
 
         Returns:
-            Predictions [B, num_outputs]
+            Predictions [B, num_outputs] (non-negative via Softplus)
         """
         # Extract features from both sides (shared backbone)
         feat_left = self._extract_features(x_left)
@@ -151,6 +151,9 @@ class DualInputRegressionNet(nn.Module):
 
         # Regression head
         output = self.head(feat_concat)
+
+        # Apply Softplus for non-negative constraint (biomass values are always >= 0)
+        output = F.softplus(output)
 
         return output
 
