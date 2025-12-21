@@ -3,8 +3,9 @@
 Supports:
 - Multi-fold model ensemble
 - Test Time Augmentation (TTA) applied to original image before split
-- Dual input (left-right split) model
+- Dual input (left-right split) density map model
 - Automatic submission creation
+- Density map visualization
 """
 
 # isort: off
@@ -102,13 +103,12 @@ def load_models(
     model_config = model_cfg
 
     for fold in folds:
-        # Build model
+        # Build model (DensityMapModel)
         model = build_model(
-            model_name=model_cfg.get("backbone", "tf_efficientnetv2_b0.in1k"),
+            backbone=model_cfg.get("backbone", "maxvit_small_tf_512.in1k"),
+            decoder_channels=model_cfg.get("decoder_channels", [512, 256, 128, 64]),
             num_outputs=model_cfg.get("num_outputs", 3),
             pretrained=False,
-            dropout=model_cfg.get("dropout", 0.2),
-            hidden_size=model_cfg.get("hidden_size", 512),
             device=device,
         )
 
@@ -205,6 +205,7 @@ def run_inference(
     post_split_transform: A.Compose,
     device: torch.device,
     image_col: str = "image_path",
+    visualize_dir: Path | None = None,
 ) -> dict[str, np.ndarray]:
     """Run inference on test set.
 
@@ -216,12 +217,18 @@ def run_inference(
         post_split_transform: Post-split transform
         device: Device for inference
         image_col: Column name for image path
+        visualize_dir: Directory to save density map visualizations (None = no visualization)
 
     Returns:
         Dict mapping image_path to 5 target predictions
         Order: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
     """
     predictions = {}
+
+    # Setup visualization directory
+    if visualize_dir is not None:
+        visualize_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Saving density map visualizations to: {visualize_dir}")
 
     # Get unique images
     unique_images = test_df[image_col].unique()
@@ -243,6 +250,14 @@ def run_inference(
         pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
 
         predictions[image_path] = pred_5
+
+        # Visualize density maps (using first model, no TTA)
+        if visualize_dir is not None:
+            _, left_density, right_density = predict_with_density_maps(
+                image, models[0], post_split_transform, device
+            )
+            save_path = visualize_dir / f"{Path(image_path).stem}_density.png"
+            visualize_density_map(left_density, right_density, save_path)
 
     return predictions
 
@@ -317,6 +332,11 @@ def main():
         choices=["best", "last"],
         help="Weight type to use: 'best' (highest R²) or 'last' (final epoch)",
     )
+    parser.add_argument(
+        "--visualize",
+        action="store_true",
+        help="Save density map visualizations for each image",
+    )
     args = parser.parse_args()
 
     # Set seed for reproducibility
@@ -364,6 +384,9 @@ def main():
     test_df = pd.read_csv(test_csv)
     print(f"Test samples: {len(test_df)}")
 
+    # Setup visualization directory if requested
+    visualize_dir = output_dir / "density_maps" if args.visualize else None
+
     # Run inference (returns dict: image_path -> 5 predictions)
     predictions = run_inference(
         test_df=test_df,
@@ -372,6 +395,7 @@ def main():
         tta_transforms=tta_transforms,
         post_split_transform=post_split_transform,
         device=device,
+        visualize_dir=visualize_dir,
     )
 
     # Create submission using test_df's sample_id directly
@@ -459,6 +483,84 @@ def kaggle_inference(
     submission_df = create_submission(test_df, predictions)
 
     return submission_df
+
+
+def visualize_density_map(
+    left_density: np.ndarray,
+    right_density: np.ndarray,
+    save_path: Path,
+    target_names: list[str] | None = None,
+) -> None:
+    """Visualize density maps as heatmaps.
+
+    Args:
+        left_density: Left image density map [num_outputs, H, W]
+        right_density: Right image density map [num_outputs, H, W]
+        save_path: Path to save the visualization
+        target_names: Names for each target channel
+    """
+    import matplotlib.pyplot as plt
+
+    if target_names is None:
+        target_names = ["Dead", "Green", "Clover"]
+
+    num_outputs = left_density.shape[0]
+    fig, axes = plt.subplots(2, num_outputs, figsize=(5 * num_outputs, 10))
+
+    for i, name in enumerate(target_names):
+        # Left density map
+        im_left = axes[0, i].imshow(left_density[i], cmap="hot", vmin=0)
+        axes[0, i].set_title(f"Left {name}: {left_density[i].sum():.2f}g")
+        axes[0, i].axis("off")
+        plt.colorbar(im_left, ax=axes[0, i], fraction=0.046, pad=0.04)
+
+        # Right density map
+        im_right = axes[1, i].imshow(right_density[i], cmap="hot", vmin=0)
+        axes[1, i].set_title(f"Right {name}: {right_density[i].sum():.2f}g")
+        axes[1, i].axis("off")
+        plt.colorbar(im_right, ax=axes[1, i], fraction=0.046, pad=0.04)
+
+    plt.suptitle(f"Total: {(left_density.sum() + right_density.sum()):.2f}g", fontsize=14)
+    plt.tight_layout()
+    plt.savefig(save_path, dpi=100, bbox_inches="tight")
+    plt.close()
+
+
+@torch.inference_mode()
+def predict_with_density_maps(
+    image: np.ndarray,
+    model: torch.nn.Module,
+    post_split_transform: A.Compose,
+    device: torch.device,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Predict for a single image and return density maps.
+
+    Args:
+        image: Original image [H, W, C] in RGB
+        model: Single model (not ensemble)
+        post_split_transform: Transform for each half
+        device: Device for inference
+
+    Returns:
+        Tuple of (predictions [3], left_density [3, H, W], right_density [3, H, W])
+    """
+    # Split into left and right halves
+    mid = image.shape[1] // 2
+    image_left = image[:, :mid, :]
+    image_right = image[:, mid:, :]
+
+    # Apply post-split transform
+    left_tensor = post_split_transform(image=image_left)["image"].unsqueeze(0).to(device)
+    right_tensor = post_split_transform(image=image_right)["image"].unsqueeze(0).to(device)
+
+    # Predict with density maps
+    pred, left_density, right_density = model(left_tensor, right_tensor, return_density_maps=True)
+
+    return (
+        pred.cpu().numpy()[0],
+        left_density.cpu().numpy()[0],
+        right_density.cpu().numpy()[0],
+    )
 
 
 if __name__ == "__main__":

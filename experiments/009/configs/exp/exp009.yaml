@@ -18,10 +18,10 @@ dataset:
 # Training settings
 trainer:
   train_batch_size: 2
-  val_batch_size: 16
+  val_batch_size: 4
   gradient_accumulation_steps: 8  # Effective batch size = 2 * 8 = 16
   num_workers: 4
-  num_epochs: 200
+  num_epochs: 400
   use_amp: true
   n_folds: 5
   fold: null  # Train all folds
@@ -31,46 +31,81 @@ trainer:
 optimization:
   lr:
     # - 1e-3
-    # - 5e-4
+    - 5e-4
     # - 2e-4
-    # - 1e-4
+    - 1e-4
     - 5e-5
-  weight_decay: 
-    - 1e-2
-    # - 1e-3
+  weight_decay:
+    # - 1e-2
+    - 1e-3
     # - 1e-4
   warmup_rate: 0.1
   use_ema: true
   ema_decay: 0.997
   ema_start_ratio: 0.05
 
-# Model settings (grid search)
+# Model settings (DensityMapModel)
+# Architecture: Encoder (ConvNeXtV2) -> Bottleneck (Pre-act ResBlock) -> Decoder (Unet)
+# Output: Density maps [B, 3, 128, 128] -> Mean over pixels -> [B, 3]
 model:
   backbone:
-    - maxvit_small_tf_512.in1k
-    # - convnextv2_tiny.fcmae_ft_in22k_in1k
-    # - convnextv2_base.fcmae_ft_in22k_in1k
-    # - convnext_tiny.in12k_ft_in1k
-    # - convnext_base.fb_in22k_ft_in1k
+    # - maxvit_small_tf_512.in1k  # 5-level, output 256x256, NaN issue with AMP
+    - convnextv2_base.fcmae_ft_in22k_in1k  # 4-level, output 128x128, stable with AMP
   pretrained: true
   num_outputs: 3
-  dropout: 0.1
-  hidden_size: 512
+  decoder_channels:
+    - 512
+    - 256
+    - 128
 
-# Loss function (TotalAwareLoss)
-# Weights aligned with competition metric:
-#   Dry_Total_g: 0.5, GDM_g: 0.2, individual components: 0.1 each
+# Loss function (SimpleSmoothL1Loss)
+# Simple mean Smooth L1 loss across all 3 targets (Dead, Green, Clover)
 loss:
   beta: 1.0
-  component_weight: 0.3  # Total weight for Dead, Green, Clover (0.1 each)
-  total_weight: 0.5      # Weight for Total = Dead + Green + Clover
-  gdm_weight: 0.2        # Weight for GDM = Green + Clover
 
 # Augmentation settings
 augmentation:
+  # Training augmentations
+  train:
+    horizontal_flip:
+      p: 0.5
+    vertical_flip:
+      p: 0.5
+    random_brightness_contrast:
+      brightness_limit: 0.2
+      contrast_limit: 0.2
+      p: 0.3
+    coarse_dropout:
+      num_holes_range:
+        - 10
+        - 20
+      hole_height_range:
+        - 20
+        - 100
+      hole_width_range:
+        - 20
+        - 100
+      p: 0.3
+    gaussian_blur:
+      blur_limit:
+        - 3
+        - 7
+      p: 0.3
+    hue_saturation_value:
+      hue_shift_limit: 10
+      sat_shift_limit: 20
+      val_shift_limit: 20
+      p: 0.5
+    random_gamma:
+      gamma_limit:
+        - 60
+        - 140
+      p: 0.5
+    random_rotate90:
+      p: 0.3
   mixup:
     enabled: true
-    alpha: 
+    alpha:
       # - 0.4
       # - 1.0
       - 2.0

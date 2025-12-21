@@ -50,6 +50,7 @@ NON_SWEEP_PATHS: set[tuple[str, ...]] = {
     ("experiment", "notes"),
     ("dataset", "target_cols"),
     ("loss", "weights"),
+    ("model", "decoder_channels"),
     ("augmentation", "normalize", "mean"),
     ("augmentation", "normalize", "std"),
     ("augmentation", "train"),
@@ -339,6 +340,10 @@ def train_one_epoch(
 
         # Update weights after accumulation steps
         if (step + 1) % gradient_accumulation_steps == 0:
+            # Unscale gradients and clip to prevent explosion
+            scaler.unscale_(optimizer)
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
             scaler.step(optimizer)
             scaler.update()
             optimizer.zero_grad(set_to_none=True)
@@ -356,6 +361,10 @@ def train_one_epoch(
     # Handle remaining gradients at the end of epoch
     remaining_steps = len(train_loader) % gradient_accumulation_steps
     if remaining_steps != 0:
+        # Unscale gradients and clip to prevent explosion
+        scaler.unscale_(optimizer)
+        torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=1.0)
+
         scaler.step(optimizer)
         scaler.update()
         optimizer.zero_grad(set_to_none=True)
@@ -531,23 +540,18 @@ def train_single_fold(
         pin_memory=True,
     )
 
-    # Build model
+    # Build model (DensityMapModel)
     model = build_model(
-        model_name=model_cfg.get("backbone", "tf_efficientnetv2_b0.in1k"),
+        backbone=model_cfg.get("backbone", "maxvit_small_tf_512.in1k"),
+        decoder_channels=model_cfg.get("decoder_channels", [512, 256, 128, 64]),
         num_outputs=model_cfg.get("num_outputs", 3),
         pretrained=model_cfg.get("pretrained", True),
-        in_chans=in_chans,
-        dropout=model_cfg.get("dropout", 0.2),
-        hidden_size=model_cfg.get("hidden_size", 512),
         device=device,
     )
 
-    # Build loss function (TotalAwareLoss)
+    # Build loss function (SimpleSmoothL1Loss)
     criterion = build_loss_function(
         beta=loss_cfg.get("beta", 1.0),
-        component_weight=loss_cfg.get("component_weight", 0.3),
-        total_weight=loss_cfg.get("total_weight", 0.5),
-        gdm_weight=loss_cfg.get("gdm_weight", 0.2),
     )
 
     # Optimizer and scheduler
