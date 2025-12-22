@@ -14,12 +14,12 @@ dataset:
 
   img_size:
     - 640
-    - 512
+    # - 512
 
 # Training settings
 trainer:
   train_batch_size: 2
-  val_batch_size: 16
+  val_batch_size: 8
   gradient_accumulation_steps: 8  # Effective batch size = 2 * 8 = 16
   num_workers: 4
   num_epochs: 200
@@ -70,8 +70,16 @@ loss:
 augmentation:
   mixup:
     enabled: true
-    alpha: 
+    alpha:
       # - 0.4
       # - 1.0
       - 2.0
     disable_ratio: 0.2  # Disable Mixup in the last 20% of training
+
+# Auxiliary tasks (multi-task learning)
+auxiliary_tasks:
+  species:
+    enabled: true              # Enable species classification as auxiliary task
+    lambda: 0.1                # Weight for species loss (main_loss + lambda * species_loss)
+    use_class_weight: true     # Use class weighting for imbalanced species
+    weight_power: 0.5          # Power for inverse frequency weighting (0.5 = sqrt)

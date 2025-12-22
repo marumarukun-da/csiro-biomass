@@ -24,7 +24,7 @@ import torch
 from albumentations.pytorch import ToTensorV2
 from tqdm import tqdm
 
-from src.data import build_tta_pre_split_transforms
+from src.data import NUM_SPECIES, build_tta_pre_split_transforms
 from src.metric import derive_all_targets
 from src.model import build_model
 from src.seed import seed_everything
@@ -82,6 +82,7 @@ def load_models(
 
     models = []
     model_config = None
+    full_cfg = {}
 
     # Load config (same for all folds)
     config_path = run_dir / "config.yaml"
@@ -89,7 +90,8 @@ def load_models(
         from omegaconf import OmegaConf
 
         cfg = OmegaConf.load(str(config_path))
-        model_cfg = OmegaConf.to_container(cfg, resolve=True).get("model", {})
+        full_cfg = OmegaConf.to_container(cfg, resolve=True)
+        model_cfg = full_cfg.get("model", {})
     else:
         # Fallback to JSON config
         json_path = run_dir / "config.json"
@@ -101,6 +103,11 @@ def load_models(
 
     model_config = model_cfg
 
+    # Check if auxiliary task was enabled during training
+    aux_cfg = full_cfg.get("auxiliary_tasks", {})
+    species_enabled = aux_cfg.get("species", {}).get("enabled", False)
+    num_species = NUM_SPECIES if species_enabled else 0
+
     for fold in folds:
         # Build model
         model = build_model(
@@ -109,6 +116,7 @@ def load_models(
             pretrained=False,
             dropout=model_cfg.get("dropout", 0.2),
             hidden_size=model_cfg.get("hidden_size", 512),
+            num_species=num_species,
             device=device,
         )
 
@@ -190,7 +198,8 @@ def predict_single_image(
 
         # 4. Predict with each model
         for model in models:
-            pred = model(left_tensor, right_tensor)
+            outputs = model(left_tensor, right_tensor)
+            pred = outputs["biomass"]  # Extract biomass predictions from dict
             all_preds.append(pred.cpu().numpy()[0])
 
     # Average all predictions

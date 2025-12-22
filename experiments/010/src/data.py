@@ -12,6 +12,27 @@ from torch.utils.data import DataLoader, Dataset
 # Target columns we predict
 TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
 
+# Species list (15 classes) - sorted by frequency in train.csv
+SPECIES_LIST = [
+    "Ryegrass_Clover",  # 98
+    "Ryegrass",  # 62
+    "Phalaris_Clover",  # 42
+    "Clover",  # 41
+    "Fescue",  # 28
+    "Lucerne",  # 22
+    "Phalaris_BarleyGrass_SilverGrass_SpearGrass_Clover_Capeweed",  # 11
+    "WhiteClover",  # 10
+    "Fescue_CrumbWeed",  # 10
+    "Phalaris_Ryegrass_Clover",  # 8
+    "Phalaris",  # 8
+    "Phalaris_Clover_Ryegrass_Barleygrass_Bromegrass",  # 7
+    "SubcloverLosa",  # 5
+    "SubcloverDalkeith",  # 3
+    "Mixed",  # 2
+]
+SPECIES_TO_IDX = {sp: i for i, sp in enumerate(SPECIES_LIST)}
+NUM_SPECIES = len(SPECIES_LIST)
+
 
 def convert_long_to_wide(df: pd.DataFrame) -> pd.DataFrame:
     """Convert Long format CSV to Wide format (1 row per image).
@@ -152,6 +173,10 @@ class DualInputBiomassDataset(Dataset):
         if self.is_train and all(col in row for col in self.target_cols):
             targets = [row[col] for col in self.target_cols]
             result["targets"] = torch.tensor(targets, dtype=torch.float32)
+
+        # Add species label if available (for auxiliary task)
+        if "Species" in row and row["Species"] in SPECIES_TO_IDX:
+            result["species"] = SPECIES_TO_IDX[row["Species"]]
 
         return result
 

@@ -1,5 +1,6 @@
 """Loss function for biomass regression."""
 
+import torch
 import torch.nn.functional as F
 from torch import nn
 
@@ -117,11 +118,7 @@ class TotalAwareLoss(nn.Module):
         loss_components = (loss_dead + loss_green + loss_clover) / 3.0
 
         # Combined loss
-        loss = (
-            self.component_weight * loss_components
-            + self.total_weight * loss_total
-            + self.gdm_weight * loss_gdm
-        )
+        loss = self.component_weight * loss_components + self.total_weight * loss_total + self.gdm_weight * loss_gdm
 
         return loss
 
@@ -149,3 +146,123 @@ def build_loss_function(
         gdm_weight=gdm_weight,
         beta=beta,
     )
+
+
+class MultiTaskLoss(nn.Module):
+    """Multi-task loss combining main regression and auxiliary classification.
+
+    Combines:
+    - Main task: Biomass regression (TotalAwareLoss)
+    - Auxiliary task: Species classification (CrossEntropyLoss)
+    """
+
+    def __init__(
+        self,
+        main_loss: nn.Module,
+        lambda_species: float = 0.1,
+        class_weights: torch.Tensor | None = None,
+    ):
+        """Initialize MultiTaskLoss.
+
+        Args:
+            main_loss: Loss function for main task (e.g., TotalAwareLoss)
+            lambda_species: Weight for species classification loss
+            class_weights: Optional class weights for species (for imbalanced data)
+        """
+        super().__init__()
+        self.main_loss = main_loss
+        self.lambda_species = lambda_species
+        self.register_buffer(
+            "class_weights",
+            class_weights if class_weights is not None else None,
+        )
+
+    def forward(
+        self,
+        outputs: dict[str, torch.Tensor],
+        targets: torch.Tensor,
+        species: torch.Tensor | None = None,
+        species_b: torch.Tensor | None = None,
+        lam: torch.Tensor | None = None,
+    ) -> tuple[torch.Tensor, dict[str, float]]:
+        """Calculate multi-task loss.
+
+        Args:
+            outputs: Model outputs dict with "biomass" and optionally "species"
+            targets: Ground truth for biomass [B, 3]
+            species: Ground truth species labels [B] (optional, or species_a for Mixup)
+            species_b: Shuffled species labels [B] for Mixup (optional)
+            lam: Lambda values [B] for Mixup soft-label loss (optional)
+
+        Returns:
+            tuple of (total_loss, loss_dict)
+            - total_loss: Combined loss for backpropagation
+            - loss_dict: Individual loss values for logging
+        """
+        # Main task loss
+        loss_main = self.main_loss(outputs["biomass"], targets)
+
+        loss_dict = {"main": loss_main.item()}
+        total_loss = loss_main
+
+        # Auxiliary task loss (species classification)
+        if species is not None and "species" in outputs:
+            if species_b is not None and lam is not None:
+                # Mixup: soft-label loss
+                # loss = λ * CE(pred, species_a) + (1-λ) * CE(pred, species_b)
+                ce_a = F.cross_entropy(
+                    outputs["species"],
+                    species,
+                    weight=self.class_weights,
+                    reduction="none",
+                )
+                ce_b = F.cross_entropy(
+                    outputs["species"],
+                    species_b,
+                    weight=self.class_weights,
+                    reduction="none",
+                )
+                loss_species = (lam * ce_a + (1 - lam) * ce_b).mean()
+            else:
+                # Normal: standard cross entropy
+                loss_species = F.cross_entropy(
+                    outputs["species"],
+                    species,
+                    weight=self.class_weights,
+                )
+            loss_dict["species"] = loss_species.item()
+            total_loss = total_loss + self.lambda_species * loss_species
+
+        loss_dict["total"] = total_loss.item()
+
+        return total_loss, loss_dict
+
+
+def compute_species_class_weights(
+    species_counts: dict[str, int],
+    species_list: list[str],
+    power: float = 0.5,
+    device: torch.device | str = "cpu",
+) -> torch.Tensor:
+    """Compute class weights for species classification.
+
+    Args:
+        species_counts: Dict mapping species name to count
+        species_list: Ordered list of species names
+        power: Power for inverse frequency weighting (0.5 = sqrt, 1.0 = inverse)
+        device: Device to place tensor on
+
+    Returns:
+        Class weights tensor [num_species]
+    """
+    weights = []
+    for sp in species_list:
+        count = species_counts.get(sp, 1)  # Default to 1 if not found
+        weights.append(1.0 / (count**power))
+
+    weights = torch.tensor(weights, dtype=torch.float32, device=device)
+
+    # Normalize so mean is 1
+    weights = weights / weights.mean()
+
+    return weights

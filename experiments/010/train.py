@@ -33,13 +33,19 @@ from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
 from src.data import (
+    NUM_SPECIES,
+    SPECIES_LIST,
     DualInputBiomassDataset,
     build_post_split_transform,
     build_pre_split_transform,
     build_pre_split_transform_valid,
     convert_long_to_wide,
 )
-from src.loss_function import build_loss_function
+from src.loss_function import (
+    MultiTaskLoss,
+    build_loss_function,
+    compute_species_class_weights,
+)
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_full
 from src.mixup import mixup_data
 from src.model import build_model
@@ -314,6 +320,7 @@ def train_one_epoch(
     model.train()
     train_loss_sum = 0.0
     train_samples = 0
+    is_multitask = isinstance(criterion, MultiTaskLoss)
 
     pbar = tqdm(train_loader, desc=f"Epoch {epoch}/{num_epochs} [train]", leave=False)
 
@@ -325,13 +332,27 @@ def train_one_epoch(
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
 
+        # Get species labels for auxiliary task
+        species = None
+        if is_multitask and "species" in batch:
+            species = batch["species"].to(device)
+
         # Apply Mixup if enabled
         if use_mixup:
-            images_left, images_right, targets, _ = mixup_data(images_left, images_right, targets, alpha=mixup_alpha)
+            images_left, images_right, targets, lam, species_a, species_b = mixup_data(
+                images_left, images_right, targets, alpha=mixup_alpha, species=species
+            )
+        else:
+            species_a, species_b, lam = species, None, None
 
         with autocast(device_type=device.type, enabled=use_amp):
-            preds = model(images_left, images_right)
-            loss = criterion(preds, targets)
+            outputs = model(images_left, images_right)
+
+            if is_multitask:
+                loss, _ = criterion(outputs, targets, species=species_a, species_b=species_b, lam=lam)
+            else:
+                loss = criterion(outputs["biomass"], targets)
+
             # Scale loss for gradient accumulation
             scaled_loss = loss / gradient_accumulation_steps
 
@@ -377,13 +398,23 @@ def validate(
     device: torch.device,
     epoch: int,
     num_epochs: int,
-) -> tuple[float, float, np.ndarray, np.ndarray]:
-    """Validate model."""
+) -> tuple[float, float, float | None, np.ndarray, np.ndarray]:
+    """Validate model.
+
+    Returns:
+        tuple of (val_loss, val_r2, species_acc, all_preds, all_targets)
+        species_acc is None if auxiliary task is not enabled
+    """
     model.eval()
     val_loss_sum = 0.0
     val_samples = 0
     all_preds = []
     all_targets = []
+    is_multitask = isinstance(criterion, MultiTaskLoss)
+
+    # For species accuracy tracking
+    species_correct = 0
+    species_total = 0
 
     pbar = tqdm(valid_loader, desc=f"Epoch {epoch}/{num_epochs} [val]", leave=False)
     for batch in pbar:
@@ -392,8 +423,24 @@ def validate(
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
 
-        preds = model(images_left, images_right)
-        loss = criterion(preds, targets)
+        # Get species labels for auxiliary task
+        species = None
+        if is_multitask and "species" in batch:
+            species = batch["species"].to(device)
+
+        outputs = model(images_left, images_right)
+        preds = outputs["biomass"]
+
+        if is_multitask:
+            loss, _ = criterion(outputs, targets, species=species)
+
+            # Calculate species accuracy
+            if species is not None and "species" in outputs:
+                species_pred = outputs["species"].argmax(dim=1)
+                species_correct += (species_pred == species).sum().item()
+                species_total += batch_size
+        else:
+            loss = criterion(preds, targets)
 
         val_loss_sum += float(loss.item()) * batch_size
         val_samples += batch_size
@@ -403,12 +450,17 @@ def validate(
 
     val_loss = val_loss_sum / max(val_samples, 1)
 
+    # Calculate species accuracy if available
+    species_acc = None
+    if species_total > 0:
+        species_acc = species_correct / species_total
+
     # Calculate R² score (using all 5 targets to match LB metric)
     all_preds = np.concatenate(all_preds, axis=0)
     all_targets = np.concatenate(all_targets, axis=0)
     val_r2 = weighted_r2_score_full(all_targets, all_preds)
 
-    return val_loss, val_r2, all_preds, all_targets
+    return val_loss, val_r2, species_acc, all_preds, all_targets
 
 
 def train_single_fold(
@@ -531,6 +583,12 @@ def train_single_fold(
         pin_memory=True,
     )
 
+    # Auxiliary task settings
+    aux_cfg = cfg.get("auxiliary_tasks", {})
+    species_cfg = aux_cfg.get("species", {})
+    use_species_aux = species_cfg.get("enabled", False)
+    num_species = NUM_SPECIES if use_species_aux else 0
+
     # Build model
     model = build_model(
         model_name=model_cfg.get("backbone", "tf_efficientnetv2_b0.in1k"),
@@ -539,16 +597,43 @@ def train_single_fold(
         in_chans=in_chans,
         dropout=model_cfg.get("dropout", 0.2),
         hidden_size=model_cfg.get("hidden_size", 512),
+        num_species=num_species,
         device=device,
     )
 
-    # Build loss function (TotalAwareLoss)
-    criterion = build_loss_function(
+    # Build loss function
+    main_loss = build_loss_function(
         beta=loss_cfg.get("beta", 1.0),
         component_weight=loss_cfg.get("component_weight", 0.3),
         total_weight=loss_cfg.get("total_weight", 0.5),
         gdm_weight=loss_cfg.get("gdm_weight", 0.2),
     )
+
+    # Multi-task loss with species classification
+    if use_species_aux:
+        lambda_species = species_cfg.get("lambda", 0.1)
+        use_class_weight = species_cfg.get("use_class_weight", True)
+        weight_power = species_cfg.get("weight_power", 0.5)
+
+        class_weights = None
+        if use_class_weight:
+            species_counts = train_fold_df["Species"].value_counts().to_dict()
+            class_weights = compute_species_class_weights(
+                species_counts=species_counts,
+                species_list=SPECIES_LIST,
+                power=weight_power,
+                device=device,
+            )
+            logger.info(f"Species class weights computed (power={weight_power})")
+
+        criterion = MultiTaskLoss(
+            main_loss=main_loss,
+            lambda_species=lambda_species,
+            class_weights=class_weights,
+        )
+        logger.info(f"Species auxiliary task enabled: lambda={lambda_species}")
+    else:
+        criterion = main_loss
 
     # Optimizer and scheduler
     num_epochs = trainer_cfg.get("num_epochs", 30)
@@ -601,7 +686,7 @@ def train_single_fold(
         logger.info("Mixup disabled")
 
     # Training loop
-    history = {"train_loss": [], "val_loss": [], "val_r2": []}
+    history = {"train_loss": [], "val_loss": [], "val_r2": [], "species_acc": []}
     best_val_r2 = -float("inf")
     best_val_loss = float("inf")
     best_epoch = -1
@@ -636,7 +721,7 @@ def train_single_fold(
 
         # Validate (use EMA model if available)
         eval_model = ema.module if ema is not None else model
-        val_loss, val_r2, _, _ = validate(
+        val_loss, val_r2, species_acc, _, _ = validate(
             eval_model,
             valid_loader,
             criterion,
@@ -649,11 +734,13 @@ def train_single_fold(
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
         history["val_r2"].append(val_r2)
+        history["species_acc"].append(species_acc)
 
-        # Log with Mixup status
+        # Log with Mixup status and species accuracy
         mixup_status = "[mixup]" if use_mixup_this_epoch else "[no mixup]"
+        species_str = f", species_acc: {species_acc:.3f}" if species_acc is not None else ""
         logger.info(
-            f"Epoch {epoch}/{num_epochs} {mixup_status} - train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}"
+            f"Epoch {epoch}/{num_epochs} {mixup_status} - train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}{species_str}"
         )
 
         # Save best model (by val_loss to avoid spike selection)

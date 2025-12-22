@@ -62,9 +62,10 @@ class DualInputRegressionNet(nn.Module):
     - GeM pooling for each
     - Concatenate features from both sides
     - MLP head for regression
+    - Optional: Species classification head (auxiliary task)
 
     Input: Two images (left half, right half of original image)
-    Output: Regression predictions
+    Output: dict with "biomass" predictions and optionally "species" logits
     """
 
     def __init__(
@@ -75,6 +76,7 @@ class DualInputRegressionNet(nn.Module):
         in_chans: int = 3,
         dropout: float = 0.1,
         hidden_size: int = 512,
+        num_species: int = 0,
     ):
         """Initialize DualInputRegressionNet.
 
@@ -85,9 +87,11 @@ class DualInputRegressionNet(nn.Module):
             in_chans: Number of input channels
             dropout: Dropout rate
             hidden_size: Hidden layer size in regression head
+            num_species: Number of species classes (0 = no auxiliary task)
         """
         super().__init__()
         self.num_outputs = num_outputs
+        self.num_species = num_species
 
         # Shared backbone (weight sharing for left and right)
         self.backbone = timm.create_model(
@@ -109,6 +113,12 @@ class DualInputRegressionNet(nn.Module):
             nn.Dropout(dropout),
             nn.Linear(hidden_size, num_outputs),
         )
+
+        # Species classification head (auxiliary task)
+        if num_species > 0:
+            self.head_species = nn.Linear(self.num_features * 2, num_species)
+        else:
+            self.head_species = None
 
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
         """Extract features from a single image.
@@ -132,7 +142,7 @@ class DualInputRegressionNet(nn.Module):
 
         return pooled
 
-    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> torch.Tensor:
+    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> dict[str, torch.Tensor]:
         """Forward pass with dual inputs.
 
         Args:
@@ -140,7 +150,9 @@ class DualInputRegressionNet(nn.Module):
             x_right: Right half images [B, C, H, W]
 
         Returns:
-            Predictions [B, num_outputs] (non-negative via Softplus)
+            dict with:
+            - "biomass": Predictions [B, num_outputs] (non-negative via Softplus)
+            - "species": Logits [B, num_species] (if auxiliary task enabled)
         """
         # Extract features from both sides (shared backbone)
         feat_left = self._extract_features(x_left)
@@ -150,12 +162,18 @@ class DualInputRegressionNet(nn.Module):
         feat_concat = torch.cat([feat_left, feat_right], dim=1)
 
         # Regression head
-        output = self.head(feat_concat)
+        biomass = self.head(feat_concat)
 
         # Apply Softplus for non-negative constraint (biomass values are always >= 0)
-        output = F.softplus(output)
+        biomass = F.softplus(biomass)
 
-        return output
+        result = {"biomass": biomass}
+
+        # Species classification head (auxiliary task)
+        if self.head_species is not None:
+            result["species"] = self.head_species(feat_concat)
+
+        return result
 
 
 def build_model(
@@ -165,6 +183,7 @@ def build_model(
     in_chans: int = 3,
     dropout: float = 0.2,
     hidden_size: int = 512,
+    num_species: int = 0,
     device: torch.device | str = "cuda",
 ) -> nn.Module:
     """Build DualInputRegressionNet model.
@@ -176,6 +195,7 @@ def build_model(
         in_chans: Number of input channels
         dropout: Dropout rate
         hidden_size: Hidden layer size
+        num_species: Number of species classes (0 = no auxiliary task)
         device: Device to place model on
 
     Returns:
@@ -188,6 +208,7 @@ def build_model(
         in_chans=in_chans,
         dropout=dropout,
         hidden_size=hidden_size,
+        num_species=num_species,
     )
 
     return model.to(device)
@@ -200,6 +221,7 @@ def load_model(
     in_chans: int = 3,
     dropout: float = 0.2,
     hidden_size: int = 512,
+    num_species: int = 0,
     device: torch.device | str = "cuda",
 ) -> nn.Module:
     """Load trained model from checkpoint.
@@ -211,6 +233,7 @@ def load_model(
         in_chans: Number of input channels
         dropout: Dropout rate
         hidden_size: Hidden layer size
+        num_species: Number of species classes (0 = no auxiliary task)
         device: Device to place model on
 
     Returns:
@@ -223,6 +246,7 @@ def load_model(
         in_chans=in_chans,
         dropout=dropout,
         hidden_size=hidden_size,
+        num_species=num_species,
         device=device,
     )
 

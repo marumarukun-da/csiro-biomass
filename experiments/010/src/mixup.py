@@ -10,7 +10,8 @@ def mixup_data(
     images_right: Tensor,
     targets: Tensor,
     alpha: float = 0.4,
-) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+    species: Tensor | None = None,
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor | None, Tensor | None]:
     """Sample-wise Mixup for Dual Input model.
 
     Applies the same lambda to both left and right images from the same sample
@@ -24,13 +25,16 @@ def mixup_data(
         images_right: Right half images [B, C, H, W]
         targets: Target values [B, num_targets]
         alpha: Beta distribution parameter (default: 0.4)
+        species: Species labels [B] (optional, for auxiliary task)
 
     Returns:
-        tuple of (mixed_left, mixed_right, mixed_targets, lam)
+        tuple of (mixed_left, mixed_right, mixed_targets, lam, species_a, species_b)
         - mixed_left: Mixed left images [B, C, H, W]
         - mixed_right: Mixed right images [B, C, H, W]
         - mixed_targets: Mixed target values [B, num_targets]
         - lam: Lambda values used for mixing [B]
+        - species_a: Original species labels [B] (or None if species is None)
+        - species_b: Shuffled species labels [B] (or None if species is None)
     """
     batch_size = images_left.size(0)
     device = images_left.device
@@ -52,4 +56,8 @@ def mixup_data(
     lam_target = lam.view(-1, 1)
     mixed_targets = lam_target * targets + (1 - lam_target) * targets[indices]
 
-    return mixed_left, mixed_right, mixed_targets, lam
+    # Species labels for soft-label loss (not mixed, just paired)
+    species_a = species
+    species_b = species[indices] if species is not None else None
+
+    return mixed_left, mixed_right, mixed_targets, lam, species_a, species_b
