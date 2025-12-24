@@ -71,6 +71,7 @@ class DualInputRegressionNet(nn.Module):
         self,
         model_name: str = "tf_efficientnetv2_b0.in1k",
         num_outputs: int = 3,
+        num_classes: int = 4,
         pretrained: bool = True,
         in_chans: int = 3,
         dropout: float = 0.1,
@@ -81,6 +82,7 @@ class DualInputRegressionNet(nn.Module):
         Args:
             model_name: timm model name for backbone
             num_outputs: Number of regression outputs
+            num_classes: Number of classes for auxiliary classification task (State)
             pretrained: Use pretrained weights
             in_chans: Number of input channels
             dropout: Dropout rate
@@ -88,6 +90,7 @@ class DualInputRegressionNet(nn.Module):
         """
         super().__init__()
         self.num_outputs = num_outputs
+        self.num_classes = num_classes
 
         # Shared backbone (weight sharing for left and right)
         self.backbone = timm.create_model(
@@ -102,12 +105,21 @@ class DualInputRegressionNet(nn.Module):
         self.global_pool = GeM(p_trainable=True)
 
         # Regression head (input: 2 * num_features from concatenated left+right)
-        self.head = nn.Sequential(
+        self.regression_head = nn.Sequential(
             nn.Dropout(dropout),
             nn.Linear(self.num_features * 2, hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
             nn.Linear(hidden_size, num_outputs),
+        )
+
+        # Classification head for auxiliary State classification task
+        self.classification_head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(self.num_features * 2, hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, num_classes),
         )
 
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
@@ -132,7 +144,7 @@ class DualInputRegressionNet(nn.Module):
 
         return pooled
 
-    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> torch.Tensor:
+    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Forward pass with dual inputs.
 
         Args:
@@ -140,7 +152,9 @@ class DualInputRegressionNet(nn.Module):
             x_right: Right half images [B, C, H, W]
 
         Returns:
-            Predictions [B, num_outputs] (non-negative via Softplus)
+            Tuple of:
+            - regression_output: [B, num_outputs] (non-negative via Softplus)
+            - classification_logits: [B, num_classes] (raw logits for State classification)
         """
         # Extract features from both sides (shared backbone)
         feat_left = self._extract_features(x_left)
@@ -150,17 +164,20 @@ class DualInputRegressionNet(nn.Module):
         feat_concat = torch.cat([feat_left, feat_right], dim=1)
 
         # Regression head
-        output = self.head(feat_concat)
-
+        regression_output = self.regression_head(feat_concat)
         # Apply Softplus for non-negative constraint (biomass values are always >= 0)
-        output = F.softplus(output)
+        regression_output = F.softplus(regression_output)
 
-        return output
+        # Classification head (raw logits, CrossEntropyLoss handles softmax)
+        classification_logits = self.classification_head(feat_concat)
+
+        return regression_output, classification_logits
 
 
 def build_model(
     model_name: str = "tf_efficientnetv2_b0.in1k",
     num_outputs: int = 3,
+    num_classes: int = 4,
     pretrained: bool = True,
     in_chans: int = 3,
     dropout: float = 0.2,
@@ -172,6 +189,7 @@ def build_model(
     Args:
         model_name: timm model name
         num_outputs: Number of regression outputs
+        num_classes: Number of classes for auxiliary classification task (State)
         pretrained: Use pretrained weights
         in_chans: Number of input channels
         dropout: Dropout rate
@@ -184,6 +202,7 @@ def build_model(
     model = DualInputRegressionNet(
         model_name=model_name,
         num_outputs=num_outputs,
+        num_classes=num_classes,
         pretrained=pretrained,
         in_chans=in_chans,
         dropout=dropout,
@@ -197,6 +216,7 @@ def load_model(
     model_path: str,
     model_name: str = "tf_efficientnetv2_b0.in1k",
     num_outputs: int = 3,
+    num_classes: int = 4,
     in_chans: int = 3,
     dropout: float = 0.2,
     hidden_size: int = 512,
@@ -208,6 +228,7 @@ def load_model(
         model_path: Path to model weights
         model_name: timm model name
         num_outputs: Number of regression outputs
+        num_classes: Number of classes for auxiliary classification task (State)
         in_chans: Number of input channels
         dropout: Dropout rate
         hidden_size: Hidden layer size
@@ -219,6 +240,7 @@ def load_model(
     model = build_model(
         model_name=model_name,
         num_outputs=num_outputs,
+        num_classes=num_classes,
         pretrained=False,
         in_chans=in_chans,
         dropout=dropout,

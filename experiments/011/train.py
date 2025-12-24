@@ -33,6 +33,8 @@ from tqdm.auto import tqdm
 from transformers import get_cosine_schedule_with_warmup
 
 from src.data import (
+    NUM_STATES,
+    STATE_TO_IDX,
     DualInputBiomassDataset,
     build_post_split_transform,
     build_pre_split_transform,
@@ -294,7 +296,7 @@ def train_one_epoch(
     Args:
         model: Model to train
         train_loader: Training data loader
-        criterion: Loss function
+        criterion: Loss function (BiomassLossWithAuxClassification)
         optimizer: Optimizer
         scheduler: Learning rate scheduler
         scaler: Gradient scaler for AMP
@@ -321,17 +323,28 @@ def train_one_epoch(
 
     for step, batch in enumerate(pbar):
         targets = batch["targets"].to(device)
+        state_labels = torch.tensor(batch["state_label"], dtype=torch.long, device=device)
         images_left = batch["image_left"].to(device)
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
 
         # Apply Mixup if enabled
         if use_mixup:
-            images_left, images_right, targets, _ = mixup_data(images_left, images_right, targets, alpha=mixup_alpha)
+            images_left, images_right, targets, lam, indices = mixup_data(
+                images_left, images_right, targets, alpha=mixup_alpha
+            )
+            # Convert state labels to one-hot and mix with same lambda/indices
+            state_onehot = torch.zeros(batch_size, NUM_STATES, device=device)
+            state_onehot.scatter_(1, state_labels.unsqueeze(1), 1.0)
+            # lam is [B], broadcast to [B, 1] for mixing
+            lam_cls = lam.view(-1, 1)
+            state_labels_mixed = lam_cls * state_onehot + (1 - lam_cls) * state_onehot[indices]
+        else:
+            state_labels_mixed = state_labels  # Use hard labels directly
 
         with autocast(device_type=device.type, enabled=use_amp):
-            preds = model(images_left, images_right)
-            loss = criterion(preds, targets)
+            regression_preds, classification_logits = model(images_left, images_right)
+            loss = criterion(regression_preds, classification_logits, targets, state_labels_mixed)
             # Scale loss for gradient accumulation
             scaled_loss = loss / gradient_accumulation_steps
 
@@ -377,29 +390,50 @@ def validate(
     device: torch.device,
     epoch: int,
     num_epochs: int,
-) -> tuple[float, float, np.ndarray, np.ndarray]:
-    """Validate model."""
+) -> dict[str, float | np.ndarray]:
+    """Validate model.
+
+    Returns:
+        Dictionary with validation metrics:
+        - val_loss: Validation loss
+        - val_r2: Weighted R² score
+        - val_acc: State classification accuracy
+        - val_recall_wa: Recall for WA state
+        - val_precision_wa: Precision for WA state
+        - all_preds: All regression predictions
+        - all_targets: All regression targets
+    """
+    from sklearn.metrics import accuracy_score, precision_score, recall_score
+
     model.eval()
     val_loss_sum = 0.0
     val_samples = 0
     all_preds = []
     all_targets = []
+    all_state_preds = []
+    all_state_targets = []
 
     pbar = tqdm(valid_loader, desc=f"Epoch {epoch}/{num_epochs} [val]", leave=False)
     for batch in pbar:
         targets = batch["targets"].to(device)
+        state_labels = torch.tensor(batch["state_label"], dtype=torch.long, device=device)
         images_left = batch["image_left"].to(device)
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
 
-        preds = model(images_left, images_right)
-        loss = criterion(preds, targets)
+        regression_preds, classification_logits = model(images_left, images_right)
+        loss = criterion(regression_preds, classification_logits, targets, state_labels)
 
         val_loss_sum += float(loss.item()) * batch_size
         val_samples += batch_size
 
-        all_preds.append(preds.cpu().numpy())
+        all_preds.append(regression_preds.cpu().numpy())
         all_targets.append(targets.cpu().numpy())
+
+        # Classification predictions (argmax of logits)
+        state_preds = classification_logits.argmax(dim=1).cpu().numpy()
+        all_state_preds.append(state_preds)
+        all_state_targets.append(state_labels.cpu().numpy())
 
     val_loss = val_loss_sum / max(val_samples, 1)
 
@@ -408,7 +442,37 @@ def validate(
     all_targets = np.concatenate(all_targets, axis=0)
     val_r2 = weighted_r2_score_full(all_targets, all_preds)
 
-    return val_loss, val_r2, all_preds, all_targets
+    # Calculate classification metrics
+    all_state_preds = np.concatenate(all_state_preds, axis=0)
+    all_state_targets = np.concatenate(all_state_targets, axis=0)
+
+    val_acc = accuracy_score(all_state_targets, all_state_preds)
+
+    # WA state metrics (WA index = 2)
+    wa_idx = STATE_TO_IDX["WA"]
+    wa_true = (all_state_targets == wa_idx).astype(int)
+    wa_pred = (all_state_preds == wa_idx).astype(int)
+
+    # Handle edge case where there are no WA samples or predictions
+    if wa_true.sum() > 0:
+        val_recall_wa = recall_score(wa_true, wa_pred, zero_division=0.0)
+    else:
+        val_recall_wa = 0.0
+
+    if wa_pred.sum() > 0:
+        val_precision_wa = precision_score(wa_true, wa_pred, zero_division=0.0)
+    else:
+        val_precision_wa = 0.0
+
+    return {
+        "val_loss": val_loss,
+        "val_r2": val_r2,
+        "val_acc": val_acc,
+        "val_recall_wa": val_recall_wa,
+        "val_precision_wa": val_precision_wa,
+        "all_preds": all_preds,
+        "all_targets": all_targets,
+    }
 
 
 def train_single_fold(
@@ -535,6 +599,7 @@ def train_single_fold(
     model = build_model(
         model_name=model_cfg.get("backbone", "tf_efficientnetv2_b0.in1k"),
         num_outputs=model_cfg.get("num_outputs", 3),
+        num_classes=model_cfg.get("num_classes", NUM_STATES),
         pretrained=model_cfg.get("pretrained", True),
         in_chans=in_chans,
         dropout=model_cfg.get("dropout", 0.2),
@@ -542,12 +607,10 @@ def train_single_fold(
         device=device,
     )
 
-    # Build loss function (TotalAwareLoss)
+    # Build loss function (BiomassLossWithAuxClassification)
     criterion = build_loss_function(
         beta=loss_cfg.get("beta", 1.0),
-        component_weight=loss_cfg.get("component_weight", 0.3),
-        total_weight=loss_cfg.get("total_weight", 0.5),
-        gdm_weight=loss_cfg.get("gdm_weight", 0.2),
+        classification_weight=loss_cfg.get("classification_weight", 0.5),
     )
 
     # Optimizer and scheduler
@@ -601,7 +664,14 @@ def train_single_fold(
         logger.info("Mixup disabled")
 
     # Training loop
-    history = {"train_loss": [], "val_loss": [], "val_r2": []}
+    history = {
+        "train_loss": [],
+        "val_loss": [],
+        "val_r2": [],
+        "val_acc": [],
+        "val_recall_wa": [],
+        "val_precision_wa": [],
+    }
     best_val_r2 = -float("inf")
     best_val_loss = float("inf")
     best_epoch = -1
@@ -636,7 +706,7 @@ def train_single_fold(
 
         # Validate (use EMA model if available)
         eval_model = ema.module if ema is not None else model
-        val_loss, val_r2, _, _ = validate(
+        val_metrics = validate(
             eval_model,
             valid_loader,
             criterion,
@@ -644,16 +714,26 @@ def train_single_fold(
             epoch,
             num_epochs,
         )
+        val_loss = val_metrics["val_loss"]
+        val_r2 = val_metrics["val_r2"]
+        val_acc = val_metrics["val_acc"]
+        val_recall_wa = val_metrics["val_recall_wa"]
+        val_precision_wa = val_metrics["val_precision_wa"]
 
         # Record history
         history["train_loss"].append(train_loss)
         history["val_loss"].append(val_loss)
         history["val_r2"].append(val_r2)
+        history["val_acc"].append(val_acc)
+        history["val_recall_wa"].append(val_recall_wa)
+        history["val_precision_wa"].append(val_precision_wa)
 
         # Log with Mixup status
         mixup_status = "[mixup]" if use_mixup_this_epoch else "[no mixup]"
         logger.info(
-            f"Epoch {epoch}/{num_epochs} {mixup_status} - train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}"
+            f"Epoch {epoch}/{num_epochs} {mixup_status} - "
+            f"train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}, "
+            f"val_acc: {val_acc:.4f}, val_recall_wa: {val_recall_wa:.4f}, val_precision_wa: {val_precision_wa:.4f}"
         )
 
         # Save best model (by val_loss to avoid spike selection)

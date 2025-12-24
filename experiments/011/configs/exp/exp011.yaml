@@ -18,7 +18,7 @@ dataset:
 # Training settings
 trainer:
   train_batch_size: 2
-  val_batch_size: 8
+  val_batch_size: 4
   gradient_accumulation_steps: 8  # Effective batch size = 2 * 8 = 16
   num_workers: 4
   num_epochs: 200
@@ -33,7 +33,7 @@ optimization:
     # - 1e-3
     # - 5e-4
     # - 2e-4
-    # - 1e-4
+    - 1e-4
     - 5e-5
   weight_decay: 
     - 1e-2
@@ -59,9 +59,6 @@ model:
 #   Dry_Total_g: 0.5, GDM_g: 0.2, individual components: 0.1 each
 loss:
   beta: 1.0
-  component_weight: 0.3  # Total weight for Dead, Green, Clover (0.1 each)
-  total_weight: 0.5      # Weight for Total = Dead + Green + Clover
-  gdm_weight: 0.2        # Weight for GDM = Green + Clover
 
 # Augmentation settings
 augmentation:

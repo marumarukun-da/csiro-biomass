@@ -10,7 +10,7 @@ def mixup_data(
     images_right: Tensor,
     targets: Tensor,
     alpha: float = 0.4,
-) -> tuple[Tensor, Tensor, Tensor, Tensor]:
+) -> tuple[Tensor, Tensor, Tensor, Tensor, Tensor]:
     """Sample-wise Mixup for Dual Input model.
 
     Applies the same lambda to both left and right images from the same sample
@@ -26,11 +26,12 @@ def mixup_data(
         alpha: Beta distribution parameter (default: 0.4)
 
     Returns:
-        tuple of (mixed_left, mixed_right, mixed_targets, lam)
+        tuple of (mixed_left, mixed_right, mixed_targets, lam, indices)
         - mixed_left: Mixed left images [B, C, H, W]
         - mixed_right: Mixed right images [B, C, H, W]
         - mixed_targets: Mixed target values [B, num_targets]
         - lam: Lambda values used for mixing [B]
+        - indices: Shuffle indices used for mixing [B]
     """
     batch_size = images_left.size(0)
     device = images_left.device
@@ -52,4 +53,4 @@ def mixup_data(
     lam_target = lam.view(-1, 1)
     mixed_targets = lam_target * targets + (1 - lam_target) * targets[indices]
 
-    return mixed_left, mixed_right, mixed_targets, lam
+    return mixed_left, mixed_right, mixed_targets, lam, indices

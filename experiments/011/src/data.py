@@ -12,6 +12,10 @@ from torch.utils.data import DataLoader, Dataset
 # Target columns we predict
 TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
 
+# State to index mapping for auxiliary classification task
+STATE_TO_IDX = {"Tas": 0, "NSW": 1, "WA": 2, "Vic": 3}
+NUM_STATES = len(STATE_TO_IDX)
+
 
 def convert_long_to_wide(df: pd.DataFrame) -> pd.DataFrame:
     """Convert Long format CSV to Wide format (1 row per image).
@@ -75,6 +79,7 @@ class DualInputBiomassDataset(Dataset):
         post_split_transform: A.Compose | None = None,
         target_cols: list[str] = TARGET_COLS_PRED,
         image_col: str = "image_path",
+        state_col: str | None = "State",
         is_train: bool = True,
     ):
         """Initialize DualInputBiomassDataset.
@@ -88,6 +93,7 @@ class DualInputBiomassDataset(Dataset):
                                   (resize, normalize, to_tensor)
             target_cols: List of target column names to predict
             image_col: Column name for image path
+            state_col: Column name for state classification (None to disable)
             is_train: Whether this is training data
         """
         self.df = df.reset_index(drop=True)
@@ -96,6 +102,7 @@ class DualInputBiomassDataset(Dataset):
         self.post_split_transform = post_split_transform
         self.target_cols = target_cols
         self.image_col = image_col
+        self.state_col = state_col
         self.is_train = is_train
 
     def __len__(self) -> int:
@@ -109,6 +116,7 @@ class DualInputBiomassDataset(Dataset):
             - image_left: Tensor [C, H, W]
             - image_right: Tensor [C, H, W]
             - targets: Tensor [num_targets] (if is_train)
+            - state_label: int (if state_col is set and is_train)
             - image_id: str
             - image_path: str
         """
@@ -152,6 +160,11 @@ class DualInputBiomassDataset(Dataset):
         if self.is_train and all(col in row for col in self.target_cols):
             targets = [row[col] for col in self.target_cols]
             result["targets"] = torch.tensor(targets, dtype=torch.float32)
+
+        # Add state label for auxiliary classification task
+        if self.is_train and self.state_col is not None and self.state_col in row:
+            state_name = row[self.state_col]
+            result["state_label"] = STATE_TO_IDX[state_name]
 
         return result
 

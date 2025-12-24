@@ -1,5 +1,6 @@
 """Loss function for biomass regression."""
 
+import torch
 import torch.nn.functional as F
 from torch import nn
 
@@ -117,35 +118,95 @@ class TotalAwareLoss(nn.Module):
         loss_components = (loss_dead + loss_green + loss_clover) / 3.0
 
         # Combined loss
-        loss = (
-            self.component_weight * loss_components
-            + self.total_weight * loss_total
-            + self.gdm_weight * loss_gdm
-        )
+        loss = self.component_weight * loss_components + self.total_weight * loss_total + self.gdm_weight * loss_gdm
 
         return loss
 
 
+class BiomassLossWithAuxClassification(nn.Module):
+    """Combined loss for biomass regression with auxiliary State classification.
+
+    Loss composition:
+    - Regression loss: Smooth L1 for each of 3 targets (Dead, Green, Clover) with equal weight 1.0
+    - Classification loss: CrossEntropy for State prediction with weight 0.5
+    - Total weight sum: 3.0 (regression) + 0.5 (classification) = 3.5
+
+    Supports both hard labels (indices) and soft labels (probability distributions) for Mixup.
+    """
+
+    def __init__(
+        self,
+        beta: float = 1.0,
+        classification_weight: float = 0.5,
+    ):
+        """Initialize BiomassLossWithAuxClassification.
+
+        Args:
+            beta: Smooth L1 beta parameter for regression loss.
+            classification_weight: Weight for auxiliary classification loss (default 0.5).
+        """
+        super().__init__()
+        self.beta = beta
+        self.classification_weight = classification_weight
+
+    def forward(
+        self,
+        regression_preds: torch.Tensor,
+        classification_logits: torch.Tensor,
+        regression_targets: torch.Tensor,
+        classification_targets: torch.Tensor,
+    ) -> torch.Tensor:
+        """Calculate combined loss.
+
+        Args:
+            regression_preds: Regression predictions [B, 3] (Dry_Dead_g, Dry_Green_g, Dry_Clover_g)
+            classification_logits: Classification logits [B, num_classes] (State prediction)
+            regression_targets: Regression ground truth [B, 3]
+            classification_targets: Classification ground truth, either:
+                - [B] hard labels (State indices) for standard training
+                - [B, num_classes] soft labels (probability distribution) for Mixup
+
+        Returns:
+            Combined loss (scalar)
+        """
+        # Regression loss: equal weight (1.0) for each of 3 targets
+        loss_dead = F.smooth_l1_loss(regression_preds[:, 0], regression_targets[:, 0], beta=self.beta)
+        loss_green = F.smooth_l1_loss(regression_preds[:, 1], regression_targets[:, 1], beta=self.beta)
+        loss_clover = F.smooth_l1_loss(regression_preds[:, 2], regression_targets[:, 2], beta=self.beta)
+
+        # Total regression loss (sum of 3 components, each with weight 1.0)
+        regression_loss = loss_dead + loss_green + loss_clover
+
+        # Classification loss: CrossEntropy for State prediction
+        # Support both hard labels (1D) and soft labels (2D) for Mixup
+        if classification_targets.dim() == 1:
+            # Hard labels: use standard cross entropy
+            classification_loss = F.cross_entropy(classification_logits, classification_targets)
+        else:
+            # Soft labels: use soft cross entropy (KL divergence style)
+            log_probs = F.log_softmax(classification_logits, dim=1)
+            classification_loss = -(classification_targets * log_probs).sum(dim=1).mean()
+
+        # Combined loss: regression (3.0) + classification (0.5) = 3.5
+        total_loss = regression_loss + self.classification_weight * classification_loss
+
+        return total_loss
+
+
 def build_loss_function(
     beta: float = 1.0,
-    component_weight: float = 0.3,
-    total_weight: float = 0.5,
-    gdm_weight: float = 0.2,
+    classification_weight: float = 0.5,
 ) -> nn.Module:
-    """Build TotalAwareLoss function.
+    """Build BiomassLossWithAuxClassification function.
 
     Args:
-        beta: Smooth L1 beta parameter
-        component_weight: Weight for individual components (Dead, Green, Clover).
-        total_weight: Weight for Total (Dead + Green + Clover) loss.
-        gdm_weight: Weight for GDM (Green + Clover) loss.
+        beta: Smooth L1 beta parameter for regression loss.
+        classification_weight: Weight for auxiliary classification loss (default 0.5).
 
     Returns:
-        TotalAwareLoss module
+        BiomassLossWithAuxClassification module
     """
-    return TotalAwareLoss(
-        component_weight=component_weight,
-        total_weight=total_weight,
-        gdm_weight=gdm_weight,
+    return BiomassLossWithAuxClassification(
         beta=beta,
+        classification_weight=classification_weight,
     )
