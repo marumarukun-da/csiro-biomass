@@ -171,7 +171,7 @@ def predict_single_image(
         device: Device for inference
 
     Returns:
-        Averaged predictions [num_outputs]
+        Averaged predictions [num_outputs] (Dry_Total_g, GDM_g, Dry_Green_g)
     """
     all_preds = []
 
@@ -188,10 +188,10 @@ def predict_single_image(
         left_tensor = post_split_transform(image=image_left)["image"].unsqueeze(0).to(device)
         right_tensor = post_split_transform(image=image_right)["image"].unsqueeze(0).to(device)
 
-        # 4. Predict with each model
+        # 4. Predict with each model (returns regression, classification, height)
         for model in models:
-            pred = model(left_tensor, right_tensor)
-            all_preds.append(pred.cpu().numpy()[0])
+            regression_pred, _, _ = model(left_tensor, right_tensor)
+            all_preds.append(regression_pred.cpu().numpy()[0])
 
     # Average all predictions
     return np.mean(all_preds, axis=0)
@@ -234,11 +234,11 @@ def run_inference(
             raise FileNotFoundError(f"Cannot read image: {full_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Predict (3 values: Dry_Dead_g, Dry_Green_g, Dry_Clover_g)
+        # Predict (3 values: Dry_Total_g, GDM_g, Dry_Green_g)
         pred_3 = predict_single_image(image, models, tta_transforms, post_split_transform, device)
 
         # Derive all 5 targets from 3 predictions
-        # Input: [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
+        # Input: [Dry_Total_g, GDM_g, Dry_Green_g]
         # Output: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
         pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
 

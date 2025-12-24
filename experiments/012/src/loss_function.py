@@ -123,13 +123,13 @@ class TotalAwareLoss(nn.Module):
         return loss
 
 
-class BiomassLossWithAuxClassification(nn.Module):
-    """Combined loss for biomass regression with auxiliary State classification.
+class MultiTaskBiomassLoss(nn.Module):
+    """Multi-task loss for biomass regression with auxiliary tasks.
 
     Loss composition:
-    - Regression loss: Smooth L1 for each of 3 targets (Dead, Green, Clover) with equal weight 1.0
-    - Classification loss: CrossEntropy for State prediction with weight 0.5
-    - Total weight sum: 3.0 (regression) + 0.5 (classification) = 3.5
+    - Regression loss: Smooth L1 for 3 targets (Total, GDM, Green) with configurable weights
+    - State classification loss: CrossEntropy with configurable weight
+    - Height regression loss: Smooth L1 with configurable weight
 
     Supports both hard labels (indices) and soft labels (probability distributions) for Mixup.
     """
@@ -137,76 +137,102 @@ class BiomassLossWithAuxClassification(nn.Module):
     def __init__(
         self,
         beta: float = 1.0,
-        classification_weight: float = 0.5,
+        regression_weights: list[float] | None = None,
+        classification_weight: float = 0.1,
+        height_weight: float = 0.1,
     ):
-        """Initialize BiomassLossWithAuxClassification.
+        """Initialize MultiTaskBiomassLoss.
 
         Args:
             beta: Smooth L1 beta parameter for regression loss.
-            classification_weight: Weight for auxiliary classification loss (default 0.5).
+            regression_weights: Weights for each regression target [Total, GDM, Green].
+                               Default: [1.0, 0.6, 0.3]
+            classification_weight: Weight for auxiliary State classification loss.
+            height_weight: Weight for auxiliary Height regression loss.
         """
         super().__init__()
         self.beta = beta
+        self.regression_weights = regression_weights if regression_weights is not None else [1.0, 0.6, 0.3]
         self.classification_weight = classification_weight
+        self.height_weight = height_weight
 
     def forward(
         self,
         regression_preds: torch.Tensor,
         classification_logits: torch.Tensor,
+        height_preds: torch.Tensor,
         regression_targets: torch.Tensor,
         classification_targets: torch.Tensor,
+        height_targets: torch.Tensor,
     ) -> torch.Tensor:
-        """Calculate combined loss.
+        """Calculate combined multi-task loss.
 
         Args:
-            regression_preds: Regression predictions [B, 3] (Dry_Dead_g, Dry_Green_g, Dry_Clover_g)
+            regression_preds: Regression predictions [B, 3] (Dry_Total_g, GDM_g, Dry_Green_g)
             classification_logits: Classification logits [B, num_classes] (State prediction)
+            height_preds: Height predictions [B, 1]
             regression_targets: Regression ground truth [B, 3]
             classification_targets: Classification ground truth, either:
                 - [B] hard labels (State indices) for standard training
                 - [B, num_classes] soft labels (probability distribution) for Mixup
+            height_targets: Height ground truth [B] or [B, 1]
 
         Returns:
             Combined loss (scalar)
         """
-        # Regression loss: equal weight (1.0) for each of 3 targets
-        loss_dead = F.smooth_l1_loss(regression_preds[:, 0], regression_targets[:, 0], beta=self.beta)
-        loss_green = F.smooth_l1_loss(regression_preds[:, 1], regression_targets[:, 1], beta=self.beta)
-        loss_clover = F.smooth_l1_loss(regression_preds[:, 2], regression_targets[:, 2], beta=self.beta)
+        # Regression loss: weighted Smooth L1 for each target
+        loss_total = F.smooth_l1_loss(regression_preds[:, 0], regression_targets[:, 0], beta=self.beta)
+        loss_gdm = F.smooth_l1_loss(regression_preds[:, 1], regression_targets[:, 1], beta=self.beta)
+        loss_green = F.smooth_l1_loss(regression_preds[:, 2], regression_targets[:, 2], beta=self.beta)
 
-        # Total regression loss (sum of 3 components, each with weight 1.0)
-        regression_loss = loss_dead + loss_green + loss_clover
+        regression_loss = (
+            self.regression_weights[0] * loss_total
+            + self.regression_weights[1] * loss_gdm
+            + self.regression_weights[2] * loss_green
+        )
 
         # Classification loss: CrossEntropy for State prediction
         # Support both hard labels (1D) and soft labels (2D) for Mixup
         if classification_targets.dim() == 1:
-            # Hard labels: use standard cross entropy
             classification_loss = F.cross_entropy(classification_logits, classification_targets)
         else:
-            # Soft labels: use soft cross entropy (KL divergence style)
             log_probs = F.log_softmax(classification_logits, dim=1)
             classification_loss = -(classification_targets * log_probs).sum(dim=1).mean()
 
-        # Combined loss: regression (3.0) + classification (0.5) = 3.5
-        total_loss = regression_loss + self.classification_weight * classification_loss
+        # Height regression loss: Smooth L1
+        height_targets_flat = height_targets.view(-1)
+        height_preds_flat = height_preds.view(-1)
+        height_loss = F.smooth_l1_loss(height_preds_flat, height_targets_flat, beta=self.beta)
+
+        # Combined loss
+        total_loss = (
+            regression_loss + self.classification_weight * classification_loss + self.height_weight * height_loss
+        )
 
         return total_loss
 
 
 def build_loss_function(
     beta: float = 1.0,
-    classification_weight: float = 0.5,
+    regression_weights: list[float] | None = None,
+    classification_weight: float = 0.2,
+    height_weight: float = 0.2,
 ) -> nn.Module:
-    """Build BiomassLossWithAuxClassification function.
+    """Build MultiTaskBiomassLoss function.
 
     Args:
         beta: Smooth L1 beta parameter for regression loss.
-        classification_weight: Weight for auxiliary classification loss (default 0.5).
+        regression_weights: Weights for each regression target [Total, GDM, Green].
+                           Default: [1.5, 0.9, 0.3]
+        classification_weight: Weight for auxiliary State classification loss.
+        height_weight: Weight for auxiliary Height regression loss.
 
     Returns:
-        BiomassLossWithAuxClassification module
+        MultiTaskBiomassLoss module
     """
-    return BiomassLossWithAuxClassification(
+    return MultiTaskBiomassLoss(
         beta=beta,
+        regression_weights=regression_weights,
         classification_weight=classification_weight,
+        height_weight=height_weight,
     )

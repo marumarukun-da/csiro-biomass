@@ -81,7 +81,7 @@ class DualInputRegressionNet(nn.Module):
 
         Args:
             model_name: timm model name for backbone
-            num_outputs: Number of regression outputs
+            num_outputs: Number of regression outputs (Total, GDM, Green)
             num_classes: Number of classes for auxiliary classification task (State)
             pretrained: Use pretrained weights
             in_chans: Number of input channels
@@ -122,6 +122,15 @@ class DualInputRegressionNet(nn.Module):
             nn.Linear(hidden_size, num_classes),
         )
 
+        # Height regression head for auxiliary Height_Avg_cm prediction
+        self.height_head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(self.num_features * 2, hidden_size),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size, 1),
+        )
+
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
         """Extract features from a single image.
 
@@ -144,7 +153,7 @@ class DualInputRegressionNet(nn.Module):
 
         return pooled
 
-    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         """Forward pass with dual inputs.
 
         Args:
@@ -155,6 +164,7 @@ class DualInputRegressionNet(nn.Module):
             Tuple of:
             - regression_output: [B, num_outputs] (non-negative via Softplus)
             - classification_logits: [B, num_classes] (raw logits for State classification)
+            - height_pred: [B, 1] (non-negative via Softplus for Height_Avg_cm)
         """
         # Extract features from both sides (shared backbone)
         feat_left = self._extract_features(x_left)
@@ -171,7 +181,11 @@ class DualInputRegressionNet(nn.Module):
         # Classification head (raw logits, CrossEntropyLoss handles softmax)
         classification_logits = self.classification_head(feat_concat)
 
-        return regression_output, classification_logits
+        # Height head (non-negative via Softplus)
+        height_pred = self.height_head(feat_concat)
+        height_pred = F.softplus(height_pred)
+
+        return regression_output, classification_logits, height_pred
 
 
 def build_model(

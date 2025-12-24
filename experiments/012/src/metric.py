@@ -13,27 +13,27 @@ TARGET_WEIGHTS = {
 }
 
 # Columns we actually predict (others are derived)
-TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
+TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
 
 
 def derive_all_targets(preds_3: np.ndarray) -> np.ndarray:
     """Derive all 5 target values from 3 predicted values.
 
     Args:
-        preds_3: Array of shape [N, 3] with columns [Dry_Dead_g, Dry_Green_g, Dry_Clover_g]
+        preds_3: Array of shape [N, 3] with columns [Dry_Total_g, GDM_g, Dry_Green_g]
 
     Returns:
         Array of shape [N, 5] with columns [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
     """
-    Dry_Dead_g = preds_3[:, 0]
-    Dry_Green_g = preds_3[:, 1]
-    Dry_Clover_g = preds_3[:, 2]
+    Dry_Total_g = preds_3[:, 0]
+    GDM_g = preds_3[:, 1]
+    Dry_Green_g = preds_3[:, 2]
 
-    # Derive remaining targets
-    # GDM_g = Dry_Green_g + Dry_Clover_g
-    # Dry_Total_g = Dry_Dead_g + GDM_g = Dry_Dead_g + Dry_Green_g + Dry_Clover_g
-    GDM_g = Dry_Green_g + Dry_Clover_g
-    Dry_Total_g = Dry_Dead_g + GDM_g
+    # Derive remaining targets (clip to 0 since biomass values are non-negative)
+    # Dry_Dead_g = Dry_Total_g - GDM_g
+    # Dry_Clover_g = GDM_g - Dry_Green_g
+    Dry_Dead_g = np.clip(Dry_Total_g - GDM_g, 0, None)
+    Dry_Clover_g = np.clip(GDM_g - Dry_Green_g, 0, None)
 
     # Return in TARGET_COLS_ALL order
     return np.stack([Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g], axis=1)

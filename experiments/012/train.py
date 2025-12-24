@@ -51,7 +51,7 @@ from src.seed import seed_everything
 NON_SWEEP_PATHS: set[tuple[str, ...]] = {
     ("experiment", "notes"),
     ("dataset", "target_cols"),
-    ("loss", "weights"),
+    ("loss", "regression_weights"),
     ("augmentation", "normalize", "mean"),
     ("augmentation", "normalize", "std"),
     ("augmentation", "train"),
@@ -296,7 +296,7 @@ def train_one_epoch(
     Args:
         model: Model to train
         train_loader: Training data loader
-        criterion: Loss function (BiomassLossWithAuxClassification)
+        criterion: Loss function (MultiTaskBiomassLoss)
         optimizer: Optimizer
         scheduler: Learning rate scheduler
         scaler: Gradient scaler for AMP
@@ -324,6 +324,7 @@ def train_one_epoch(
     for step, batch in enumerate(pbar):
         targets = batch["targets"].to(device)
         state_labels = torch.tensor(batch["state_label"], dtype=torch.long, device=device)
+        height_values = torch.tensor(batch["height_value"], dtype=torch.float32, device=device)
         images_left = batch["image_left"].to(device)
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
@@ -339,12 +340,17 @@ def train_one_epoch(
             # lam is [B], broadcast to [B, 1] for mixing
             lam_cls = lam.view(-1, 1)
             state_labels_mixed = lam_cls * state_onehot + (1 - lam_cls) * state_onehot[indices]
+            # Mix height values with same lambda/indices
+            height_values_mixed = lam * height_values + (1 - lam) * height_values[indices]
         else:
             state_labels_mixed = state_labels  # Use hard labels directly
+            height_values_mixed = height_values
 
         with autocast(device_type=device.type, enabled=use_amp):
-            regression_preds, classification_logits = model(images_left, images_right)
-            loss = criterion(regression_preds, classification_logits, targets, state_labels_mixed)
+            regression_preds, classification_logits, height_preds = model(images_left, images_right)
+            loss = criterion(
+                regression_preds, classification_logits, height_preds, targets, state_labels_mixed, height_values_mixed
+            )
             # Scale loss for gradient accumulation
             scaled_loss = loss / gradient_accumulation_steps
 
@@ -400,6 +406,7 @@ def validate(
         - val_acc: State classification accuracy
         - val_recall_wa: Recall for WA state
         - val_precision_wa: Precision for WA state
+        - val_height_mae: Height prediction MAE (cm)
         - all_preds: All regression predictions
         - all_targets: All regression targets
     """
@@ -412,17 +419,20 @@ def validate(
     all_targets = []
     all_state_preds = []
     all_state_targets = []
+    all_height_preds = []
+    all_height_targets = []
 
     pbar = tqdm(valid_loader, desc=f"Epoch {epoch}/{num_epochs} [val]", leave=False)
     for batch in pbar:
         targets = batch["targets"].to(device)
         state_labels = torch.tensor(batch["state_label"], dtype=torch.long, device=device)
+        height_values = torch.tensor(batch["height_value"], dtype=torch.float32, device=device)
         images_left = batch["image_left"].to(device)
         images_right = batch["image_right"].to(device)
         batch_size = images_left.size(0)
 
-        regression_preds, classification_logits = model(images_left, images_right)
-        loss = criterion(regression_preds, classification_logits, targets, state_labels)
+        regression_preds, classification_logits, height_preds = model(images_left, images_right)
+        loss = criterion(regression_preds, classification_logits, height_preds, targets, state_labels, height_values)
 
         val_loss_sum += float(loss.item()) * batch_size
         val_samples += batch_size
@@ -434,6 +444,10 @@ def validate(
         state_preds = classification_logits.argmax(dim=1).cpu().numpy()
         all_state_preds.append(state_preds)
         all_state_targets.append(state_labels.cpu().numpy())
+
+        # Height predictions
+        all_height_preds.append(height_preds.cpu().numpy().flatten())
+        all_height_targets.append(height_values.cpu().numpy())
 
     val_loss = val_loss_sum / max(val_samples, 1)
 
@@ -464,12 +478,18 @@ def validate(
     else:
         val_precision_wa = 0.0
 
+    # Calculate Height MAE
+    all_height_preds = np.concatenate(all_height_preds, axis=0)
+    all_height_targets = np.concatenate(all_height_targets, axis=0)
+    val_height_mae = np.mean(np.abs(all_height_preds - all_height_targets))
+
     return {
         "val_loss": val_loss,
         "val_r2": val_r2,
         "val_acc": val_acc,
         "val_recall_wa": val_recall_wa,
         "val_precision_wa": val_precision_wa,
+        "val_height_mae": val_height_mae,
         "all_preds": all_preds,
         "all_targets": all_targets,
     }
@@ -607,10 +627,12 @@ def train_single_fold(
         device=device,
     )
 
-    # Build loss function (BiomassLossWithAuxClassification)
+    # Build loss function (MultiTaskBiomassLoss)
     criterion = build_loss_function(
         beta=loss_cfg.get("beta", 1.0),
-        classification_weight=loss_cfg.get("classification_weight", 0.5),
+        regression_weights=loss_cfg.get("regression_weights", [1.0, 0.6, 0.3]),
+        classification_weight=loss_cfg.get("classification_weight", 0.1),
+        height_weight=loss_cfg.get("height_weight", 0.1),
     )
 
     # Optimizer and scheduler
@@ -671,6 +693,7 @@ def train_single_fold(
         "val_acc": [],
         "val_recall_wa": [],
         "val_precision_wa": [],
+        "val_height_mae": [],
     }
     best_val_r2 = -float("inf")
     best_val_loss = float("inf")
@@ -719,6 +742,7 @@ def train_single_fold(
         val_acc = val_metrics["val_acc"]
         val_recall_wa = val_metrics["val_recall_wa"]
         val_precision_wa = val_metrics["val_precision_wa"]
+        val_height_mae = val_metrics["val_height_mae"]
 
         # Record history
         history["train_loss"].append(train_loss)
@@ -727,13 +751,14 @@ def train_single_fold(
         history["val_acc"].append(val_acc)
         history["val_recall_wa"].append(val_recall_wa)
         history["val_precision_wa"].append(val_precision_wa)
+        history["val_height_mae"].append(val_height_mae)
 
         # Log with Mixup status
         mixup_status = "[mixup]" if use_mixup_this_epoch else "[no mixup]"
         logger.info(
             f"Epoch {epoch}/{num_epochs} {mixup_status} - "
             f"train_loss: {train_loss:.5f}, val_loss: {val_loss:.5f}, val_r2: {val_r2:.5f}, "
-            f"val_acc: {val_acc:.4f}, val_recall_wa: {val_recall_wa:.4f}, val_precision_wa: {val_precision_wa:.4f}"
+            f"val_acc: {val_acc:.4f}, val_height_mae: {val_height_mae:.2f}"
         )
 
         # Save best model (by val_loss to avoid spike selection)

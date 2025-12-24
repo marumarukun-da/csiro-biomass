@@ -42,7 +42,7 @@ optimization:
   warmup_rate: 0.1
   use_ema: true
   ema_decay: 0.997
-  ema_start_ratio: 0.05
+  ema_start_ratio: 0.025
 
 # Model settings (grid search)
 model:
@@ -54,18 +54,62 @@ model:
   dropout: 0.1
   hidden_size: 512
 
-# Loss function (TotalAwareLoss)
-# Weights aligned with competition metric:
-#   Dry_Total_g: 0.5, GDM_g: 0.2, individual components: 0.1 each
+# Loss function (MultiTaskBiomassLoss)
+# Regression weights: Total: 1.5, GDM: 0.9, Green: 0.3
+# Auxiliary task weights: State classification: 0.2, Height regression: 0.2
 loss:
   beta: 1.0
+  regression_weights:
+    - 1.0  # Dry_Total_g
+    - 0.6  # GDM_g
+    - 0.3  # Dry_Green_g
+  classification_weight: 0.1  # State classification (CE loss)
+  height_weight: 0.1  # Height_Avg_cm regression (Smooth L1 loss)
 
 # Augmentation settings
 augmentation:
+  train:
+    horizontal_flip:
+      p: 0.5
+    vertical_flip:
+      p: 0.5
+    random_brightness_contrast:
+      brightness_limit: 0.2
+      contrast_limit: 0.2
+      p: 0.4
+    coarse_dropout:
+      num_holes_range:
+        - 10
+        - 40
+      hole_height_range:
+        - 20
+        - 150
+      hole_width_range:
+        - 20
+        - 150
+      p: 0.3
+    gaussian_blur:
+      blur_limit:
+        - 3
+        - 7
+      p: 0.3
+    hue_saturation_value:
+      hue_shift_limit: 10
+      sat_shift_limit: 20
+      val_shift_limit: 20
+      p: 0.5
+    random_gamma:
+      gamma_limit:
+        - 60
+        - 140
+      p: 0.5
+    random_rotate90:
+      p: 0.3
+
   mixup:
     enabled: true
     alpha: 
       # - 0.4
       # - 1.0
-      - 2.0
+      - 2.5
     disable_ratio: 0.2  # Disable Mixup in the last 20% of training

@@ -10,7 +10,7 @@ from albumentations.pytorch import ToTensorV2
 from torch.utils.data import DataLoader, Dataset
 
 # Target columns we predict
-TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
+TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
 
 # State to index mapping for auxiliary classification task
 STATE_TO_IDX = {"Tas": 0, "NSW": 1, "WA": 2, "Vic": 3}
@@ -80,6 +80,7 @@ class DualInputBiomassDataset(Dataset):
         target_cols: list[str] = TARGET_COLS_PRED,
         image_col: str = "image_path",
         state_col: str | None = "State",
+        height_col: str | None = "Height_Ave_cm",
         is_train: bool = True,
     ):
         """Initialize DualInputBiomassDataset.
@@ -94,6 +95,7 @@ class DualInputBiomassDataset(Dataset):
             target_cols: List of target column names to predict
             image_col: Column name for image path
             state_col: Column name for state classification (None to disable)
+            height_col: Column name for height regression (None to disable)
             is_train: Whether this is training data
         """
         self.df = df.reset_index(drop=True)
@@ -103,6 +105,7 @@ class DualInputBiomassDataset(Dataset):
         self.target_cols = target_cols
         self.image_col = image_col
         self.state_col = state_col
+        self.height_col = height_col
         self.is_train = is_train
 
     def __len__(self) -> int:
@@ -117,6 +120,7 @@ class DualInputBiomassDataset(Dataset):
             - image_right: Tensor [C, H, W]
             - targets: Tensor [num_targets] (if is_train)
             - state_label: int (if state_col is set and is_train)
+            - height_value: float (if height_col is set and is_train)
             - image_id: str
             - image_path: str
         """
@@ -165,6 +169,10 @@ class DualInputBiomassDataset(Dataset):
         if self.is_train and self.state_col is not None and self.state_col in row:
             state_name = row[self.state_col]
             result["state_label"] = STATE_TO_IDX[state_name]
+
+        # Add height value for auxiliary regression task
+        if self.is_train and self.height_col is not None and self.height_col in row:
+            result["height_value"] = float(row[self.height_col])
 
         return result
 
