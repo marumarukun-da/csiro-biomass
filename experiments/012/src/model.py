@@ -94,10 +94,7 @@ class DualInputRegressionNet(nn.Module):
 
         # Shared backbone (weight sharing for left and right)
         self.backbone = timm.create_model(
-            model_name,
-            pretrained=pretrained,
-            in_chans=in_chans,
-            num_classes=0,
+            model_name, pretrained=pretrained, in_chans=in_chans, num_classes=0, drop_path_rate=0.2
         )
         self.num_features = self.backbone.num_features
 
