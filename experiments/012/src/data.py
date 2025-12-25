@@ -325,6 +325,7 @@ def build_tta_pre_split_transforms() -> list[tuple[str, A.Compose]]:
     - original: No transform
     - hflip: Horizontal flip (swaps left and right!)
     - vflip: Vertical flip
+    - hvflip: Horizontal + Vertical flip (180° rotation)
 
     Returns:
         List of (name, Albumentations Compose) tuples
@@ -333,6 +334,7 @@ def build_tta_pre_split_transforms() -> list[tuple[str, A.Compose]]:
         ("original", A.Compose([])),
         ("hflip", A.Compose([A.HorizontalFlip(p=1.0)])),
         ("vflip", A.Compose([A.VerticalFlip(p=1.0)])),
+        ("hvflip", A.Compose([A.HorizontalFlip(p=1.0), A.VerticalFlip(p=1.0)])),
     ]
 
 
