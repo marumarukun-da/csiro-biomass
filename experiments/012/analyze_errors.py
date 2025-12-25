@@ -1,10 +1,10 @@
-"""Error analysis script for biomass prediction models (exp011).
+"""Error analysis script for biomass prediction models (exp012).
 
 This script generates PDF reports comparing predictions vs ground truth
 for each fold's validation data.
 
 Usage:
-    python experiments/011/analyze_errors.py --run_dir data/output/011/1/.../001_convnextv2_...
+    python experiments/012/analyze_errors.py --run_dir data/output/012/1/.../001_convnextv2_...
 """
 
 import argparse
@@ -36,7 +36,7 @@ TARGET_WEIGHTS = {
     "Dry_Dead_g": 0.1,
     "Dry_Clover_g": 0.1,
 }
-TARGET_COLS_PRED = ["Dry_Dead_g", "Dry_Green_g", "Dry_Clover_g"]
+TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
 
 METADATA_COLS = ["State", "Species", "Sampling_Date", "Pre_GSHH_NDVI", "Height_Ave_cm"]
 
@@ -45,13 +45,21 @@ METADATA_COLS = ["State", "Species", "Sampling_Date", "Pre_GSHH_NDVI", "Height_A
 # Evaluation Metrics
 # =============================================================================
 def derive_all_targets(preds_3: np.ndarray) -> np.ndarray:
-    """Derive all 5 target values from 3 predicted values."""
-    Dry_Dead_g = preds_3[:, 0]
-    Dry_Green_g = preds_3[:, 1]
-    Dry_Clover_g = preds_3[:, 2]
+    """Derive all 5 target values from 3 predicted values.
 
-    GDM_g = Dry_Green_g + Dry_Clover_g
-    Dry_Total_g = Dry_Dead_g + GDM_g
+    Args:
+        preds_3: Array of shape [N, 3] with columns [Dry_Total_g, GDM_g, Dry_Green_g]
+
+    Returns:
+        Array of shape [N, 5] with columns [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
+    """
+    Dry_Total_g = preds_3[:, 0]
+    GDM_g = preds_3[:, 1]
+    Dry_Green_g = preds_3[:, 2]
+
+    # Derive remaining targets (clip to 0 since biomass values are non-negative)
+    Dry_Dead_g = np.clip(Dry_Total_g - GDM_g, 0, None)
+    Dry_Clover_g = np.clip(GDM_g - Dry_Green_g, 0, None)
 
     return np.stack([Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g], axis=1)
 
@@ -162,7 +170,7 @@ def _ensure_bchw(x: torch.Tensor, num_features: int | None) -> torch.Tensor:
 
 
 class DualInputRegressionNet(nn.Module):
-    """Dual-input regression network for biomass prediction (exp011)."""
+    """Dual-input regression network for biomass prediction (exp012)."""
 
     def __init__(
         self,
@@ -208,6 +216,15 @@ class DualInputRegressionNet(nn.Module):
             nn.Linear(hidden_size, num_classes),
         )
 
+        # Height regression head for auxiliary Height_Avg_cm prediction
+        self.height_head = nn.Sequential(
+            nn.Dropout(dropout),
+            nn.Linear(self.num_features * 2, hidden_size // 2),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(hidden_size // 2, 1),
+        )
+
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
         batch_size = x.size(0)
         features = self.backbone.forward_features(x)
@@ -216,7 +233,7 @@ class DualInputRegressionNet(nn.Module):
         pooled = self.global_pool(features).view(batch_size, -1)
         return pooled
 
-    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
+    def forward(self, x_left: torch.Tensor, x_right: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
         feat_left = self._extract_features(x_left)
         feat_right = self._extract_features(x_right)
         feat_concat = torch.cat([feat_left, feat_right], dim=1)
@@ -228,7 +245,11 @@ class DualInputRegressionNet(nn.Module):
         # Classification head
         classification_logits = self.classification_head(feat_concat)
 
-        return regression_output, classification_logits
+        # Height head
+        height_pred = self.height_head(feat_concat)
+        height_pred = F.softplus(height_pred)
+
+        return regression_output, classification_logits, height_pred
 
 
 def load_model(
@@ -331,8 +352,8 @@ def predict_fold(
         image_left = image_left.unsqueeze(0).to(device)
         image_right = image_right.unsqueeze(0).to(device)
 
-        # exp011: forward returns tuple (regression_output, classification_logits)
-        regression_pred, _ = model(image_left, image_right)
+        # exp012: forward returns tuple (regression_output, classification_logits, height_pred)
+        regression_pred, _, _ = model(image_left, image_right)
         pred = regression_pred.cpu().numpy()[0]
 
         all_preds.append(pred)
@@ -441,7 +462,7 @@ def generate_pdf(
 # Main
 # =============================================================================
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Error analysis for biomass prediction models (exp011).")
+    parser = argparse.ArgumentParser(description="Error analysis for biomass prediction models (exp012).")
     parser.add_argument(
         "--run_dir",
         type=str,
