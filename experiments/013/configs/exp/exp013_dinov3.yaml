@@ -1,0 +1,73 @@
+# DINOv3 Dense Features configuration for exp013
+
+experiment:
+  name: exp013_dinov3
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  pretrained: true
+  freeze: true
+  hidden_dim: 1280
+  num_patches: 3600  # 60x60 for 960x960 input
+
+dataset:
+  img_size: 960
+  resize_method: INTER_AREA
+  feature_dir: /path/to/precomputed_features  # Update this path before training
+  num_aug_patterns: 20
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+  aux_target_cols:
+    - Dry_Dead_g
+    - Dry_Clover_g
+
+head:
+  shared_hidden: 512
+  dropout: 0.1
+
+loss:
+  beta: 1.0
+  main_weights:
+    - 1.0  # Dry_Total_g
+    - 0.6  # GDM_g
+    - 0.3  # Dry_Green_g
+  state_weight: 0.1
+  height_weight: 0.1
+  aux_weight: 0.1  # Dead, Clover
+
+trainer:
+  num_epochs: 200
+  batch_size: 32  # Can be larger since only training head
+  gradient_accumulation_steps: 1
+  num_workers: 4
+  use_amp: true
+  n_folds: 5
+  fold: null  # Train all folds (null = all)
+  group_col: site
+
+optimization:
+  lr:
+    - 1e-4
+    - 5e-5
+  weight_decay:
+    - 1e-2
+  warmup_rate: 0.1
+  use_ema: true
+  ema_decay: 0.997
+  ema_start_ratio: 0.025
+
+augmentation:
+  mixup:
+    enabled: true
+    alpha: 2.5
+    disable_ratio: 0.2  # Disable in last 20% of training
+
+inference:
+  tta_indices:
+    - 0  # original
+    - 1  # hflip
+    - 2  # vflip
+    - 3  # hvflip
