@@ -192,6 +192,7 @@ class DualInputRegressionNet(nn.Module):
             pretrained=pretrained,
             in_chans=in_chans,
             num_classes=0,
+            drop_path_rate=0.2,
         )
         self.num_features = self.backbone.num_features
 
@@ -219,10 +220,10 @@ class DualInputRegressionNet(nn.Module):
         # Height regression head for auxiliary Height_Avg_cm prediction
         self.height_head = nn.Sequential(
             nn.Dropout(dropout),
-            nn.Linear(self.num_features * 2, hidden_size // 2),
+            nn.Linear(self.num_features * 2, hidden_size),
             nn.GELU(),
             nn.Dropout(dropout),
-            nn.Linear(hidden_size // 2, 1),
+            nn.Linear(hidden_size, 1),
         )
 
     def _extract_features(self, x: torch.Tensor) -> torch.Tensor:
