@@ -40,6 +40,10 @@ TARGET_COLS_PRED = ["Dry_Total_g", "GDM_g", "Dry_Green_g"]
 
 METADATA_COLS = ["State", "Species", "Sampling_Date", "Pre_GSHH_NDVI", "Height_Ave_cm"]
 
+# State classification mapping
+STATE_TO_IDX = {"Tas": 0, "NSW": 1, "WA": 2, "Vic": 3}
+IDX_TO_STATE = {0: "Tas", 1: "NSW", 2: "WA", 3: "Vic"}
+
 
 # =============================================================================
 # Evaluation Metrics
@@ -338,10 +342,15 @@ def predict_fold(
     image_dir: Path,
     transform: Compose,
     device: torch.device,
-) -> tuple[np.ndarray, list[np.ndarray]]:
-    """Run inference on validation data."""
+) -> tuple[np.ndarray, np.ndarray, list[np.ndarray]]:
+    """Run inference on validation data.
+
+    Returns:
+        Tuple of (regression_preds, state_preds, images)
+    """
     model.eval()
     all_preds = []
+    all_state_preds = []
     all_images = []
 
     for idx in tqdm(range(len(df)), desc="Predicting", leave=False):
@@ -354,13 +363,15 @@ def predict_fold(
         image_right = image_right.unsqueeze(0).to(device)
 
         # exp012: forward returns tuple (regression_output, classification_logits, height_pred)
-        regression_pred, _, _ = model(image_left, image_right)
+        regression_pred, class_logits, _ = model(image_left, image_right)
         pred = regression_pred.cpu().numpy()[0]
+        state_pred = class_logits.argmax(dim=1).cpu().numpy()[0]
 
         all_preds.append(pred)
+        all_state_preds.append(state_pred)
         all_images.append(original_image)
 
-    return np.array(all_preds), all_images
+    return np.array(all_preds), np.array(all_state_preds), all_images
 
 
 # =============================================================================
@@ -373,6 +384,7 @@ def create_sample_figure(
     pred: np.ndarray,
     target: np.ndarray,
     metadata: dict,
+    state_pred: int | None = None,
 ) -> None:
     """Create visualization for a single sample."""
     ax.imshow(image)
@@ -389,6 +401,15 @@ def create_sample_figure(
         if col in metadata:
             text_lines.append(f"  {col}: {metadata[col]}")
     text_lines.append("")
+
+    # State classification result
+    if state_pred is not None and "State" in metadata:
+        actual_state = metadata["State"]
+        predicted_state = IDX_TO_STATE[state_pred]
+        match = "✓" if predicted_state == actual_state else "✗"
+        text_lines.append("[State Classification]")
+        text_lines.append(f"  Pred: {predicted_state} | Actual: {actual_state} {match}")
+        text_lines.append("")
 
     text_lines.append("[Predictions vs Ground Truth]")
     for i, col in enumerate(TARGET_COLS_ALL):
@@ -408,9 +429,42 @@ def create_sample_figure(
     )
 
 
+def add_confusion_matrix_page(
+    pdf: "PdfPages",
+    state_preds: np.ndarray,
+    state_actuals: np.ndarray,
+    fold: int,
+) -> None:
+    """Add confusion matrix page to PDF.
+
+    Args:
+        pdf: PdfPages object to add the page to
+        state_preds: Predicted state indices
+        state_actuals: Actual state indices
+        fold: Fold number
+    """
+    from sklearn.metrics import ConfusionMatrixDisplay, confusion_matrix
+
+    labels = list(IDX_TO_STATE.values())  # ["Tas", "NSW", "WA", "Vic"]
+
+    cm = confusion_matrix(state_actuals, state_preds, labels=range(len(labels)))
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    disp = ConfusionMatrixDisplay(confusion_matrix=cm, display_labels=labels)
+    disp.plot(ax=ax, cmap="Blues", values_format="d")
+
+    accuracy = np.trace(cm) / np.sum(cm) if np.sum(cm) > 0 else 0.0
+    ax.set_title(f"Fold {fold} - State Classification Confusion Matrix\nAccuracy: {accuracy:.2%}")
+
+    plt.tight_layout()
+    pdf.savefig(fig, dpi=100)
+    plt.close(fig)
+
+
 def generate_pdf(
     df: pd.DataFrame,
     predictions: np.ndarray,
+    state_preds: np.ndarray,
     images: list[np.ndarray],
     output_path: Path,
     fold: int,
@@ -438,6 +492,7 @@ def generate_pdf(
                 row = df.iloc[sample_idx]
                 image = images[sample_idx]
                 pred = predictions[sample_idx]
+                state_pred = state_preds[sample_idx]
                 target = np.array([row[col] for col in TARGET_COLS_PRED])
 
                 metadata = {col: row[col] for col in METADATA_COLS if col in row}
@@ -449,12 +504,17 @@ def generate_pdf(
                     pred=pred,
                     target=target,
                     metadata=metadata,
+                    state_pred=state_pred,
                 )
 
             plt.tight_layout()
             plt.subplots_adjust(top=0.93, right=0.65)
             pdf.savefig(fig, dpi=100)
             plt.close(fig)
+
+        # Add confusion matrix page at the end
+        state_actuals = np.array([STATE_TO_IDX[row["State"]] for _, row in df.iterrows()])
+        add_confusion_matrix_page(pdf, state_preds, state_actuals, fold)
 
     print(f"  Saved: {output_path}")
 
@@ -590,7 +650,7 @@ def main() -> None:
         )
         print(f"  Loaded model from: {weight_path}")
 
-        predictions, images = predict_fold(
+        predictions, state_preds, images = predict_fold(
             model=model,
             df=val_df,
             image_dir=image_dir,
@@ -612,6 +672,7 @@ def main() -> None:
         generate_pdf(
             df=val_df,
             predictions=predictions,
+            state_preds=state_preds,
             images=images,
             output_path=pdf_path,
             fold=fold,
