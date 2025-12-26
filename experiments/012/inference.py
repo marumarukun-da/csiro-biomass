@@ -29,6 +29,11 @@ from src.metric import derive_all_targets
 from src.model import build_model
 from src.seed import seed_everything
 
+# State classification mapping
+STATE_TO_IDX = {"Tas": 0, "NSW": 1, "WA": 2, "Vic": 3}
+IDX_TO_STATE = {v: k for k, v in STATE_TO_IDX.items()}
+WA_IDX = 2  # WA index for Dead=0 logic
+
 
 def build_post_split_transform(
     img_size: int = 224,
@@ -158,7 +163,7 @@ def predict_single_image(
     tta_transforms: list[tuple[str, A.Compose]],
     post_split_transform: A.Compose,
     device: torch.device,
-) -> np.ndarray:
+) -> tuple[np.ndarray, np.ndarray]:
     """Predict for a single image using dual input model.
 
     TTA is applied to the original image BEFORE splitting.
@@ -171,9 +176,12 @@ def predict_single_image(
         device: Device for inference
 
     Returns:
-        Averaged predictions [num_outputs] (Dry_Total_g, GDM_g, Dry_Green_g)
+        Tuple of:
+        - Averaged regression predictions [num_outputs] (Dry_Total_g, GDM_g, Dry_Green_g)
+        - Averaged state probabilities [num_states] (softmax probabilities)
     """
     all_preds = []
+    all_state_probs = []
 
     for _, tta_transform in tta_transforms:
         # 1. Apply TTA to entire image
@@ -190,11 +198,14 @@ def predict_single_image(
 
         # 4. Predict with each model (returns regression, classification, height)
         for model in models:
-            regression_pred, _, _ = model(left_tensor, right_tensor)
+            regression_pred, class_logits, _ = model(left_tensor, right_tensor)
             all_preds.append(regression_pred.cpu().numpy()[0])
+            # Apply softmax to get probabilities
+            state_probs = torch.softmax(class_logits, dim=1).cpu().numpy()[0]
+            all_state_probs.append(state_probs)
 
     # Average all predictions
-    return np.mean(all_preds, axis=0)
+    return np.mean(all_preds, axis=0), np.mean(all_state_probs, axis=0)
 
 
 def run_inference(
@@ -220,11 +231,14 @@ def run_inference(
     Returns:
         Dict mapping image_path to 5 target predictions
         Order: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
+        Note: For WA state images, Dry_Dead_g is set to 0.0
     """
     predictions = {}
 
     # Get unique images
     unique_images = test_df[image_col].unique()
+
+    wa_count = 0  # Count WA predictions for logging
 
     for image_path in tqdm(unique_images, desc="Inference"):
         # Load image
@@ -234,15 +248,23 @@ def run_inference(
             raise FileNotFoundError(f"Cannot read image: {full_path}")
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
-        # Predict (3 values: Dry_Total_g, GDM_g, Dry_Green_g)
-        pred_3 = predict_single_image(image, models, tta_transforms, post_split_transform, device)
+        # Predict (3 values: Dry_Total_g, GDM_g, Dry_Green_g) and state probabilities
+        pred_3, state_probs = predict_single_image(image, models, tta_transforms, post_split_transform, device)
 
         # Derive all 5 targets from 3 predictions
         # Input: [Dry_Total_g, GDM_g, Dry_Green_g]
         # Output: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
         pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
 
+        # Apply WA logic: if predicted state is WA, set Dry_Dead_g to 0
+        predicted_state_idx = np.argmax(state_probs)
+        if predicted_state_idx == WA_IDX:
+            pred_5[1] = 0.0  # index 1 = Dry_Dead_g
+            wa_count += 1
+
         predictions[image_path] = pred_5
+
+    print(f"WA state predictions: {wa_count}/{len(unique_images)} images")
 
     return predictions
 
