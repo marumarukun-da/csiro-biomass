@@ -32,7 +32,7 @@ from src.seed import seed_everything
 # State classification mapping
 STATE_TO_IDX = {"Tas": 0, "NSW": 1, "WA": 2, "Vic": 3}
 IDX_TO_STATE = {v: k for k, v in STATE_TO_IDX.items()}
-WA_IDX = 2  # WA index for Dead=0 logic
+NSW_IDX = 1  # NSW index for Clover=0 logic
 
 
 def build_post_split_transform(
@@ -231,14 +231,14 @@ def run_inference(
     Returns:
         Dict mapping image_path to 5 target predictions
         Order: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
-        Note: For WA state images, Dry_Dead_g is set to 0.0
+        Note: For NSW state images, Dry_Clover_g is set to 0.0
     """
     predictions = {}
 
     # Get unique images
     unique_images = test_df[image_col].unique()
 
-    wa_count = 0  # Count WA predictions for logging
+    nsw_count = 0  # Count NSW predictions for logging
 
     for image_path in tqdm(unique_images, desc="Inference"):
         # Load image
@@ -256,15 +256,15 @@ def run_inference(
         # Output: [Dry_Green_g, Dry_Dead_g, Dry_Clover_g, GDM_g, Dry_Total_g]
         pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
 
-        # Apply WA logic: if predicted state is WA, set Dry_Dead_g to 0
+        # Apply NSW logic: if predicted state is NSW, set Dry_Clover_g to 0
         predicted_state_idx = np.argmax(state_probs)
-        if predicted_state_idx == WA_IDX:
-            pred_5[1] = 0.0  # index 1 = Dry_Dead_g
-            wa_count += 1
+        if predicted_state_idx == NSW_IDX:
+            pred_5[2] = 0.0  # index 2 = Dry_Clover_g
+            nsw_count += 1
 
         predictions[image_path] = pred_5
 
-    print(f"WA state predictions: {wa_count}/{len(unique_images)} images")
+    print(f"NSW state predictions: {nsw_count}/{len(unique_images)} images")
 
     return predictions
 
