@@ -9,6 +9,7 @@ import argparse
 import csv
 import json
 import logging
+import warnings
 from collections.abc import Sequence
 from copy import deepcopy
 from dataclasses import dataclass
@@ -36,6 +37,8 @@ from src.loss_function import DINOv3MultiTaskLoss
 from src.manifold_mixup import mixup_batch
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_full
 from src.seed import seed_everything
+
+warnings.filterwarnings("ignore")
 
 # Keys that should NOT be swept even if they are lists
 NON_SWEEP_PATHS: set[tuple[str, ...]] = {
@@ -284,9 +287,7 @@ def train_one_epoch(
             batch_dict = mixup_batch(batch_dict, alpha=mixup_alpha)
 
         with autocast(device_type=device.type, enabled=use_amp):
-            main_pred, state_pred, height_pred, aux_pred = model(
-                batch_dict["cls_token"], batch_dict["patch_tokens"]
-            )
+            main_pred, state_pred, height_pred, aux_pred = model(batch_dict["cls_token"], batch_dict["patch_tokens"])
 
             loss = criterion(
                 main_pred,
@@ -760,10 +761,7 @@ def train_single_run(
 
 def create_run_name(index: int, descriptor: dict[str, Any]) -> str:
     """Create run name from descriptor."""
-    parts = [
-        f"{sanitize_name(k.split('/')[-1])}-{sanitize_name(str(v))}"
-        for k, v in descriptor.items()
-    ]
+    parts = [f"{sanitize_name(k.split('/')[-1])}-{sanitize_name(str(v))}" for k, v in descriptor.items()]
     suffix = "__".join(parts) if parts else ""
 
     if suffix:

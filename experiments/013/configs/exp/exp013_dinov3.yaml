@@ -14,7 +14,7 @@ backbone:
 dataset:
   img_size: 960
   resize_method: INTER_AREA
-  feature_dir: /path/to/precomputed_features  # Update this path before training
+  feature_dir: data/output/013/extract_features # Update this path before training
   num_aug_patterns: 20
   target_cols:
     - Dry_Total_g
@@ -26,13 +26,13 @@ dataset:
 
 head:
   shared_hidden: 512
-  dropout: 0.1
+  dropout: 0.2
 
 loss:
   beta: 1.0
   main_weights:
     - 1.0  # Dry_Total_g
-    - 0.6  # GDM_g
+    - 0.5  # GDM_g
     - 0.3  # Dry_Green_g
   state_weight: 0.1
   height_weight: 0.1
@@ -50,10 +50,12 @@ trainer:
 
 optimization:
   lr:
+    - 2e-3
+    - 1e-3
     - 1e-4
-    - 5e-5
   weight_decay:
     - 1e-2
+    - 1e-3
   warmup_rate: 0.1
   use_ema: true
   ema_decay: 0.997
@@ -62,7 +64,7 @@ optimization:
 augmentation:
   mixup:
     enabled: true
-    alpha: 2.5
+    alpha: 1.0
     disable_ratio: 0.2  # Disable in last 20% of training
 
 inference:
