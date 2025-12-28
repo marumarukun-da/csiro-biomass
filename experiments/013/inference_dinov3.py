@@ -23,10 +23,31 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from src.backbone import build_backbone
+from src.backbone import build_backbone, load_backbone_weights
 from src.head_model import load_head_model
 from src.metric import derive_all_targets
 from src.seed import seed_everything
+
+
+def load_backbone(
+    weights_path: Path | None = None,
+    device: torch.device = torch.device("cuda"),
+) -> torch.nn.Module:
+    """Load DINOv3 backbone.
+
+    Args:
+        weights_path: Path to saved backbone weights. If None, download from timm.
+        device: Device to place model on.
+
+    Returns:
+        DINOv3Backbone instance.
+    """
+    if weights_path is not None and weights_path.exists():
+        print(f"Loading backbone from local weights: {weights_path}")
+        return load_backbone_weights(str(weights_path), device=str(device))
+    else:
+        print("Loading backbone from timm (online)...")
+        return build_backbone(pretrained=True, device=str(device))
 
 
 def build_tta_transforms() -> list[tuple[str, A.Compose]]:
@@ -298,6 +319,12 @@ def main():
         choices=["best", "last"],
         help="Weight type to use",
     )
+    parser.add_argument(
+        "--backbone_weights",
+        type=str,
+        default=None,
+        help="Path to backbone weights (for offline inference). If not specified, downloads from timm.",
+    )
     args = parser.parse_args()
 
     seed_everything(42)
@@ -327,8 +354,8 @@ def main():
     print(f"Using folds: {folds}")
 
     # Load DINOv3 backbone
-    print("Loading DINOv3 backbone...")
-    backbone = build_backbone(pretrained=True, device=str(device))
+    backbone_weights_path = Path(args.backbone_weights) if args.backbone_weights else None
+    backbone = load_backbone(weights_path=backbone_weights_path, device=device)
     print(f"Backbone loaded: {backbone.MODEL_NAME}")
 
     # Load head models
@@ -408,12 +435,14 @@ def kaggle_inference(
 
     print(f"Weight type: {weight_type}")
 
-    # Load backbone
-    print("Loading DINOv3 backbone...")
-    backbone = build_backbone(pretrained=True, device=str(device))
+    # Load backbone from artifact directory (for offline inference)
+    artifact_dir = config.ARTIFACT_EXP_DIR(config.EXP_NAME)
+    backbone_weights_path = artifact_dir / "backbone.pth"
+    backbone = load_backbone(weights_path=backbone_weights_path, device=device)
+    print(f"Backbone loaded: {backbone.MODEL_NAME}")
 
     # Load head models from artifact directory
-    run_dir = config.ARTIFACT_EXP_DIR(config.EXP_NAME) / run_name
+    run_dir = artifact_dir / run_name
     head_models, _ = load_head_models(
         run_dir=run_dir,
         folds=folds,

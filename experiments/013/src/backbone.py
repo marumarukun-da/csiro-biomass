@@ -95,3 +95,32 @@ def build_backbone(pretrained: bool = True, device: str = "cuda") -> DINOv3Backb
     """
     backbone = DINOv3Backbone(pretrained=pretrained)
     return backbone.to(device)
+
+
+def save_backbone_weights(backbone: DINOv3Backbone, save_path: str) -> None:
+    """Save backbone weights to file.
+
+    Args:
+        backbone: DINOv3Backbone instance with loaded weights.
+        save_path: Path to save weights.
+    """
+    torch.save(backbone.model.state_dict(), save_path)
+
+
+def load_backbone_weights(
+    weights_path: str,
+    device: str = "cuda",
+) -> DINOv3Backbone:
+    """Load backbone from saved weights (for offline inference).
+
+    Args:
+        weights_path: Path to saved backbone weights.
+        device: Device to place model on.
+
+    Returns:
+        DINOv3Backbone with loaded weights in eval mode.
+    """
+    backbone = DINOv3Backbone(pretrained=False)
+    state_dict = torch.load(weights_path, map_location=device, weights_only=True)
+    backbone.model.load_state_dict(state_dict)
+    return backbone.to(device)

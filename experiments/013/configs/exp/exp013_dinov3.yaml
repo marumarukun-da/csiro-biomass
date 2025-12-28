@@ -14,7 +14,7 @@ backbone:
 dataset:
   img_size: 960
   resize_method: INTER_AREA
-  feature_dir: data/output/013/extract_features # Update this path before training
+  feature_dir: data/output/013/1/extract_features
   num_aug_patterns: 20
   target_cols:
     - Dry_Total_g

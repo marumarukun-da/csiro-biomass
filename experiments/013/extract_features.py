@@ -15,7 +15,7 @@ import pandas as pd
 import torch
 from tqdm import tqdm
 
-from src.backbone import build_backbone
+from src.backbone import build_backbone, save_backbone_weights
 from src.data import convert_long_to_wide
 
 
@@ -149,6 +149,14 @@ def main():
     print(f"Backbone loaded: {backbone.MODEL_NAME}")
     print(f"  - Hidden dim: {backbone.hidden_dim}")
     print(f"  - Num patches for {args.img_size}x{args.img_size}: {backbone.get_num_patches(args.img_size)}")
+
+    # Save backbone weights for offline inference (Kaggle submission)
+    backbone_save_path = output_dir.parent / "backbone.pth"
+    if not backbone_save_path.exists():
+        save_backbone_weights(backbone, str(backbone_save_path))
+        print(f"Backbone weights saved to {backbone_save_path}")
+    else:
+        print(f"Backbone weights already exist at {backbone_save_path}")
 
     # Build augmentations
     augmentations = build_augmentations()
