@@ -175,21 +175,22 @@ class MultiTargetSVR:
 
 
 def extract_features_from_npz(npz_path: str | Path, aug_idx: int = 0) -> np.ndarray:
-    """Extract CLS + PatchMean features from .npz file.
+    """Extract CLS + PatchMean + PatchStd features from .npz file.
 
     Args:
         npz_path: Path to .npz feature file.
         aug_idx: Augmentation index to use (default: 0 for original).
 
     Returns:
-        Feature vector [2560] (CLS 1280 + PatchMean 1280).
+        Feature vector [3840] (CLS 1280 + PatchMean 1280 + PatchStd 1280).
     """
     data = np.load(npz_path)
     cls_token = data[f"cls_{aug_idx}"]  # [1280]
     patch_tokens = data[f"patches_{aug_idx}"]  # [3600, 1280]
     patch_mean = patch_tokens.mean(axis=0)  # [1280]
+    patch_std = patch_tokens.std(axis=0)  # [1280]
 
-    return np.concatenate([cls_token, patch_mean])  # [2560]
+    return np.concatenate([cls_token, patch_mean, patch_std])  # [3840]
 
 
 def load_all_features(

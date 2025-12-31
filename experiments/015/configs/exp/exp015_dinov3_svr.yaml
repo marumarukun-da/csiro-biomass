@@ -1,4 +1,4 @@
-# DINOv3 + SVR configuration for exp014
+# DINOv3 + SVR configuration for exp015
 
 experiment:
   name: exp015_dinov3_svr

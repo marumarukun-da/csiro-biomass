@@ -89,7 +89,7 @@ def extract_features(
     device: torch.device,
     img_size: int = 960,
 ) -> np.ndarray:
-    """Extract CLS + PatchMean features from image.
+    """Extract CLS + PatchMean + PatchStd features from image.
 
     Args:
         image: RGB image [H, W, C]
@@ -98,7 +98,7 @@ def extract_features(
         img_size: Target image size
 
     Returns:
-        Feature vector [2560]
+        Feature vector [3840]
     """
     # Resize
     image_resized = cv2.resize(image, (img_size, img_size), interpolation=cv2.INTER_AREA)
@@ -112,9 +112,11 @@ def extract_features(
 
     # Convert to numpy
     cls_np = cls_token.cpu().numpy()[0]  # [1280]
-    patch_mean = patch_tokens.cpu().numpy()[0].mean(axis=0)  # [1280]
+    patch_np = patch_tokens.cpu().numpy()[0]  # [3600, 1280]
+    patch_mean = patch_np.mean(axis=0)  # [1280]
+    patch_std = patch_np.std(axis=0)  # [1280]
 
-    return np.concatenate([cls_np, patch_mean])  # [2560]
+    return np.concatenate([cls_np, patch_mean, patch_std])  # [3840]
 
 
 def load_svr_models(
@@ -183,8 +185,10 @@ def predict_single_image(
 
         # Convert to features
         cls_np = cls_token.cpu().numpy()[0]
-        patch_mean = patch_tokens.cpu().numpy()[0].mean(axis=0)
-        features = np.concatenate([cls_np, patch_mean]).reshape(1, -1)
+        patch_np = patch_tokens.cpu().numpy()[0]
+        patch_mean = patch_np.mean(axis=0)
+        patch_std = patch_np.std(axis=0)
+        features = np.concatenate([cls_np, patch_mean, patch_std]).reshape(1, -1)
 
         # Predict with each SVR model
         for svr_model in svr_models:
