@@ -3,7 +3,7 @@
 	"workbench.iconTheme": "material-icon-theme", // アイコンテーマを設定
 	"workbench.preferredDarkColorTheme": "Monokai Dimmed", // ダークテーマをMonokai Dimmedに設定
 	"workbench.preferredLightColorTheme": "Default Light Modern", // ライトテーマをDefault Light Modernに設定
-	"workbench.editor.enablePreview": false, // エディタのプレビューを無効にする
+	"workbench.editor.enablePreview": true, // エディタのプレビューを無効にする
 	"workbench.tree.indent": 20, // ツリーのインデントを20に設定
 	"window.commandCenter": false, // コマンドセンターを無効にする
 	// Power Mode settings
