@@ -17,7 +17,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from omegaconf import OmegaConf
-from sklearn.model_selection import GroupKFold
+from sklearn.model_selection import StratifiedGroupKFold
 from tqdm import tqdm
 
 from src.data import convert_long_to_wide
@@ -53,13 +53,15 @@ def create_folds(
     df: pd.DataFrame,
     n_folds: int = 5,
     group_col: str = "site",
+    stratify_col: str = "State",
+    seed: int = 38,
 ) -> pd.DataFrame:
-    """Create fold column using GroupKFold."""
+    """Create fold column using StratifiedGroupKFold."""
     df = df.copy()
     df["fold"] = -1
 
-    gkf = GroupKFold(n_splits=n_folds)
-    for fold, (_, val_idx) in enumerate(gkf.split(df, groups=df[group_col])):
+    sgkf = StratifiedGroupKFold(n_splits=n_folds, shuffle=True, random_state=seed)
+    for fold, (_, val_idx) in enumerate(sgkf.split(df, y=df[stratify_col], groups=df[group_col])):
         df.loc[val_idx, "fold"] = fold
 
     return df
@@ -189,11 +191,12 @@ def train_svr_cv(
 
     # Create folds
     train_df = create_folds(train_df, n_folds=n_folds, group_col=group_col)
-    logger.info(f"Created {n_folds} folds using GroupKFold (group_col={group_col})")
+    logger.info(f"Created {n_folds} folds using StratifiedGroupKFold (group_col={group_col}, seed=38)")
 
-    # Load all features
-    logger.info("Loading features...")
-    X_all = load_all_features(train_df, feature_dir, aug_idx=aug_idx)
+    # Load all features (with coverage)
+    image_dir = config.get_image_dir()
+    logger.info("Loading features with coverage...")
+    X_all = load_all_features(train_df, feature_dir, image_dir=image_dir, aug_idx=aug_idx)
     logger.info(f"Features shape: {X_all.shape}")
 
     # Extract targets

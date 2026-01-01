@@ -195,18 +195,23 @@ def extract_features_from_npz(npz_path: str | Path, aug_idx: int = 0) -> np.ndar
 def load_all_features(
     df,
     feature_dir: str | Path,
+    image_dir: str | Path | None = None,
     aug_idx: int = 0,
 ) -> np.ndarray:
     """Load all features from precomputed .npz files.
 
     Args:
-        df: DataFrame with image_id column.
+        df: DataFrame with image_id and image_path columns.
         feature_dir: Directory containing .npz files.
+        image_dir: Directory containing images (for coverage calculation).
+                   If None, coverage features are not added.
         aug_idx: Augmentation index to use.
 
     Returns:
-        Feature matrix [N, 2560].
+        Feature matrix [N, 2560] or [N, 2562] if image_dir is provided.
     """
+    from .coverage import calculate_coverage_from_path
+
     feature_dir = Path(feature_dir)
     features = []
 
@@ -214,6 +219,13 @@ def load_all_features(
         image_id = row["image_id"]
         npz_path = feature_dir / f"{image_id}.npz"
         feat = extract_features_from_npz(npz_path, aug_idx=aug_idx)
+
+        # Add coverage features if image_dir is provided
+        if image_dir is not None:
+            image_path = Path(image_dir) / row["image_path"]
+            coverage_raw, coverage_log = calculate_coverage_from_path(image_path)
+            feat = np.concatenate([feat, [coverage_raw, coverage_log]])
+
         features.append(feat)
 
     return np.stack(features, axis=0)

@@ -166,7 +166,12 @@ def predict_single_image(
     Returns:
         Averaged predictions [3] (Dry_Total_g, GDM_g, Dry_Green_g)
     """
+    from src.coverage import calculate_coverage
+
     all_preds = []
+
+    # Calculate coverage once (before resize, using original image)
+    coverage_raw, coverage_log = calculate_coverage(image)
 
     # Resize to target size
     image_resized = cv2.resize(image, (img_size, img_size), interpolation=cv2.INTER_AREA)
@@ -184,7 +189,8 @@ def predict_single_image(
         # Convert to features
         cls_np = cls_token.cpu().numpy()[0]
         patch_mean = patch_tokens.cpu().numpy()[0].mean(axis=0)
-        features = np.concatenate([cls_np, patch_mean]).reshape(1, -1)
+        # Concatenate DINOv3 features + coverage features
+        features = np.concatenate([cls_np, patch_mean, [coverage_raw, coverage_log]]).reshape(1, -1)
 
         # Predict with each SVR model
         for svr_model in svr_models:
