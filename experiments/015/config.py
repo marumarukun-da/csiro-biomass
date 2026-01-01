@@ -60,7 +60,7 @@ else:
     OUTPUT_DIR.mkdir(exist_ok=True, parents=True)
 
 # 対象の exp の artifact が格納されている場所を返す
-ARTIFACT_EXP_DIR = lambda exp_name: ARTIFACT_DIR / exp_name / "1"  # noqa: E731
+ARTIFACT_EXP_DIR = lambda exp_name: ARTIFACT_DIR / exp_name / "2"  # noqa: E731
 
 
 # ---------- # HELPER FUNCTIONS # ---------- #
