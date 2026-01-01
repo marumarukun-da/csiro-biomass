@@ -1,0 +1,49 @@
+# DINOv3 + SVR configuration for exp016
+
+experiment:
+  name: exp017_dinov3_regressors
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600  # 60x60 for 960x960 input
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0  # Use original only (no augmentation)
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+svr:
+  kernel: rbf
+  # Grid search parameters
+  C:
+    - 0.1
+    - 1.0
+    - 10.0
+    - 100.0
+  gamma:
+    - scale
+    - 0.0001
+    - 0.001
+    - 0.01
+  epsilon:
+    - 0.01
+    - 0.1
+    - 0.5
+  cache_size: 2000  # MB
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0  # original
+    - 1  # hflip
+    - 2  # vflip
+    - 3  # hvflip
