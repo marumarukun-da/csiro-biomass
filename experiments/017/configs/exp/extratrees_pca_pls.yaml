@@ -1,0 +1,57 @@
+# DINOv3 + ExtraTrees with PCA/PLS preprocessing
+
+experiment:
+  name: exp017_extratrees_pca_pls
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
+head:
+  type: extratrees
+  n_jobs: -1
+  random_state: 42
+  bootstrap: false
+  max_features: 1.0
+  min_samples_leaf: 1
+  # Grid search parameters
+  n_estimators:
+    - 100
+    - 300
+    - 500
+  max_depth:
+    - 10
+    - 20
+    - null
+  min_samples_split:
+    - 2
+    - 5
+    - 10
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0
+    - 1
+    - 2
+    - 3

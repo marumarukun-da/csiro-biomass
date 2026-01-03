@@ -4,6 +4,8 @@ DINOv3特徴量に対して複数の回帰モデル（head）を比較評価す�
 
 ## 利用可能なHeadモデル
 
+### 線形モデル
+
 | Head | 説明 |
 |------|------|
 | `svr` | Support Vector Regression (RBFカーネル) |
@@ -14,22 +16,40 @@ DINOv3特徴量に対して複数の回帰モデル（head）を比較評価す�
 | `kernel_ridge` | カーネルリッジ回帰 |
 | `gpr` | ガウス過程回帰 (計算コスト高) |
 
+### GBDTモデル
+
+| Head | 説明 |
+|------|------|
+| `gbdt` | sklearn GradientBoostingRegressor |
+| `histgbdt` | sklearn HistGradientBoostingRegressor (高速) |
+| `xgboost` | XGBoost (GPU対応) |
+| `lightgbm` | LightGBM (GPU対応、高速) |
+| `catboost` | CatBoost (GPU対応) |
+
+### アンサンブルモデル
+
+| Head | 説明 |
+|------|------|
+| `extratrees` | Extremely Randomized Trees |
+
 ## 使い方
 
 ### 学習
 
 ```bash
-# Ridge で学習
-python train.py --config configs/exp/ridge.yaml
-
-# Lasso で学習
-python train.py --config configs/exp/lasso.yaml
-
-# SVR で学習
-python train.py --config configs/exp/svr.yaml
-
-# PCA/PLS前処理付きで学習
+# 線形モデル
 python train.py --config configs/exp/ridge_pca_pls.yaml
+python train.py --config configs/exp/svr_pca_pls.yaml
+
+# GBDTモデル
+python train.py --config configs/exp/xgboost_pca_pls.yaml
+python train.py --config configs/exp/lightgbm_pca_pls.yaml
+python train.py --config configs/exp/catboost_pca_pls.yaml
+python train.py --config configs/exp/gbdt_pca_pls.yaml
+python train.py --config configs/exp/histgbdt_pca_pls.yaml
+
+# アンサンブルモデル
+python train.py --config configs/exp/extratrees_pca_pls.yaml
 ```
 
 ### 推論
@@ -39,27 +59,48 @@ python train.py --config configs/exp/ridge_pca_pls.yaml
 python inference.py --experiment_dir <出力ディレクトリ名>
 
 # 例
-python inference.py --experiment_dir 20250101_123456_exp017_ridge
+python inference.py --experiment_dir 20250101_123456_exp017_xgboost
 ```
 
 ## 設定ファイル
 
 `configs/exp/` に各headの設定ファイルあり：
 
+### 線形モデル
 - `svr.yaml`, `ridge.yaml`, `lasso.yaml`, `elasticnet.yaml`
 - `bayesian_ridge.yaml`, `kernel_ridge.yaml`, `gpr.yaml`
-- `ridge_pca_pls.yaml`, `svr_pca_pls.yaml` (PCA/PLS前処理付き)
+- `*_pca_pls.yaml` (PCA/PLS前処理付き)
 
-### 設定例 (ridge.yaml)
+### GBDT/アンサンブル
+- `gbdt_pca_pls.yaml` - sklearn GradientBoosting
+- `histgbdt_pca_pls.yaml` - sklearn HistGradientBoosting
+- `xgboost_pca_pls.yaml` - XGBoost
+- `lightgbm_pca_pls.yaml` - LightGBM
+- `catboost_pca_pls.yaml` - CatBoost
+- `extratrees_pca_pls.yaml` - ExtraTrees
+
+### 設定例 (xgboost_pca_pls.yaml)
 
 ```yaml
 head:
-  type: ridge           # head種別
-  fit_intercept: true   # 固定パラメータ
-  alpha:                # リスト = グリッドサーチ対象
+  type: xgboost
+  tree_method: hist
+  device: cpu          # 'cuda' for GPU
+  n_jobs: -1
+  random_state: 42
+  # Grid search parameters (リスト = グリッドサーチ対象)
+  n_estimators:
+    - 500
+    - 1000
+    - 1500
+  learning_rate:
     - 0.01
+    - 0.05
     - 0.1
-    - 1.0
+  max_depth:
+    - 3
+    - 5
+    - 7
 ```
 
 ## 前処理 (PCA/PLS)
@@ -84,36 +125,16 @@ preprocessing:
 | `int` | 成分数（例: 100 = 100次元に削減） |
 | `null` | 無効化 |
 
+### 注意: PLSの成分数制限
+
+PLSの成分数は `min(n_samples, n_features, n_targets)` が上限です。
+ターゲットが3つの場合、`n_components: 16` を指定しても実際には3成分になります。
+
 ### 使い分け
 
 - **PCA**: 教師なし次元削減。特徴量の分散を最大化する方向に射影
 - **PLS**: 教師あり次元削減。ターゲット変数との相関を最大化する方向に射影
 - **両方同時**: PCA成分とPLS成分を結合して特徴量として使用
-
-### 設定例
-
-```yaml
-# PCAのみ（95%分散保持）
-preprocessing:
-  pca:
-    n_components: 0.95
-  pls:
-    n_components: null
-
-# PLSのみ（8成分）
-preprocessing:
-  pca:
-    n_components: null
-  pls:
-    n_components: 8
-
-# 両方（推奨）
-preprocessing:
-  pca:
-    n_components: 0.95
-  pls:
-    n_components: 8
-```
 
 ## ファイル構成
 
@@ -128,7 +149,12 @@ experiments/017/
 │       ├── svr.py        # SVR
 │       ├── ridge.py      # Ridge/Lasso/ElasticNet/BayesianRidge
 │       ├── kernel_ridge.py
-│       └── gpr.py
+│       ├── gpr.py
+│       ├── gbdt.py       # GradientBoosting/HistGradientBoosting
+│       ├── xgboost_head.py
+│       ├── lightgbm_head.py
+│       ├── catboost_head.py
+│       └── extratrees.py
 └── configs/exp/
     └── *.yaml            # 各headの設定ファイル
 ```

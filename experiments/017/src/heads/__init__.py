@@ -9,8 +9,12 @@ from pathlib import Path
 from typing import Any
 
 from .base import MultiTargetHead
+from .catboost_head import MultiTargetCatBoostHead
+from .extratrees import MultiTargetExtraTreesHead
+from .gbdt import MultiTargetGBDTHead, MultiTargetHistGBDTHead
 from .gpr import MultiTargetGPRHead
 from .kernel_ridge import MultiTargetKernelRidgeHead
+from .lightgbm_head import MultiTargetLightGBMHead
 from .ridge import (
     MultiTargetBayesianRidgeHead,
     MultiTargetElasticNetHead,
@@ -18,9 +22,11 @@ from .ridge import (
     MultiTargetRidgeHead,
 )
 from .svr import MultiTargetSVRHead
+from .xgboost_head import MultiTargetXGBoostHead
 
 # Registry of available head types
 HEAD_REGISTRY: dict[str, type[MultiTargetHead]] = {
+    # Linear models
     "svr": MultiTargetSVRHead,
     "ridge": MultiTargetRidgeHead,
     "lasso": MultiTargetLassoHead,
@@ -28,10 +34,20 @@ HEAD_REGISTRY: dict[str, type[MultiTargetHead]] = {
     "bayesian_ridge": MultiTargetBayesianRidgeHead,
     "kernel_ridge": MultiTargetKernelRidgeHead,
     "gpr": MultiTargetGPRHead,
+    # GBDT models
+    "gbdt": MultiTargetGBDTHead,
+    "histgbdt": MultiTargetHistGBDTHead,
+    "xgboost": MultiTargetXGBoostHead,
+    "lightgbm": MultiTargetLightGBMHead,
+    "catboost": MultiTargetCatBoostHead,
+    # Tree ensemble models
+    "extratrees": MultiTargetExtraTreesHead,
 }
 
 __all__ = [
+    # Base class
     "MultiTargetHead",
+    # Linear models
     "MultiTargetSVRHead",
     "MultiTargetRidgeHead",
     "MultiTargetLassoHead",
@@ -39,6 +55,15 @@ __all__ = [
     "MultiTargetBayesianRidgeHead",
     "MultiTargetKernelRidgeHead",
     "MultiTargetGPRHead",
+    # GBDT models
+    "MultiTargetGBDTHead",
+    "MultiTargetHistGBDTHead",
+    "MultiTargetXGBoostHead",
+    "MultiTargetLightGBMHead",
+    "MultiTargetCatBoostHead",
+    # Tree ensemble models
+    "MultiTargetExtraTreesHead",
+    # Registry and factory functions
     "HEAD_REGISTRY",
     "create_head",
     "load_head",
@@ -50,8 +75,11 @@ def create_head(head_type: str, **kwargs: Any) -> MultiTargetHead:
     """Factory function to create a head model.
 
     Args:
-        head_type: Type of head ('svr', 'ridge', 'lasso', 'elasticnet',
-                   'bayesian_ridge', 'kernel_ridge', 'gpr').
+        head_type: Type of head. Available types:
+            - Linear: 'svr', 'ridge', 'lasso', 'elasticnet', 'bayesian_ridge',
+                      'kernel_ridge', 'gpr'
+            - GBDT: 'gbdt', 'histgbdt', 'xgboost', 'lightgbm', 'catboost'
+            - Tree ensemble: 'extratrees'
         **kwargs: Additional arguments passed to the head constructor.
 
     Returns:

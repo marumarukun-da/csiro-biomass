@@ -1,0 +1,63 @@
+# DINOv3 + XGBoost with PCA/PLS preprocessing
+
+experiment:
+  name: exp017_xgboost_pca_pls
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
+head:
+  type: xgboost
+  tree_method: hist
+  device: cpu
+  n_jobs: -1
+  random_state: 42
+  verbosity: 0
+  colsample_bytree: 0.8
+  reg_alpha: 0.1
+  reg_lambda: 1.0
+  # Grid search parameters
+  n_estimators:
+    - 500
+    - 1000
+    - 1500
+  learning_rate:
+    - 0.01
+    - 0.05
+    - 0.1
+  max_depth:
+    - 3
+    - 5
+    - 7
+  subsample:
+    - 0.7
+    - 0.9
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0
+    - 1
+    - 2
+    - 3

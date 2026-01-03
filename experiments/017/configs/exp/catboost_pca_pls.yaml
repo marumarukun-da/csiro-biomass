@@ -1,0 +1,58 @@
+# DINOv3 + CatBoost with PCA/PLS preprocessing
+
+experiment:
+  name: exp017_catboost_pca_pls
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
+head:
+  type: catboost
+  task_type: CPU
+  random_state: 42
+  verbose: 0
+  l2_leaf_reg: 3.0
+  random_strength: 1.0
+  bagging_temperature: 1.0
+  # Grid search parameters
+  iterations:
+    - 500
+    - 1000
+    - 1500
+  learning_rate:
+    - 0.01
+    - 0.05
+    - 0.1
+  depth:
+    - 4
+    - 6
+    - 8
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
