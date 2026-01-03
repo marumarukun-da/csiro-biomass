@@ -1,0 +1,52 @@
+# DINOv3 + BayesianRidge configuration
+
+experiment:
+  name: exp017_bayesian_ridge
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+head:
+  type: bayesian_ridge
+  n_iter: 300
+  fit_intercept: true
+  # Grid search parameters (optional, BayesianRidge auto-tunes)
+  alpha_1:
+    - 1.0e-7
+    - 1.0e-6
+    - 1.0e-5
+  alpha_2:
+    - 1.0e-7
+    - 1.0e-6
+    - 1.0e-5
+  lambda_1:
+    - 1.0e-7
+    - 1.0e-6
+    - 1.0e-5
+  lambda_2:
+    - 1.0e-7
+    - 1.0e-6
+    - 1.0e-5
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0
+    - 1
+    - 2
+    - 3

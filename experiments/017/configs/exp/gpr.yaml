@@ -1,0 +1,45 @@
+# DINOv3 + GPR (Gaussian Process Regression) configuration
+# Note: GPR has O(n^3) complexity, may be slow for large datasets
+
+experiment:
+  name: exp017_gpr
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+head:
+  type: gpr
+  n_restarts_optimizer: 5
+  normalize_y: true
+  alpha: 1.0e-10
+  # Grid search parameters
+  kernel_type:
+    - rbf
+    - matern
+  length_scale:
+    - 0.1
+    - 1.0
+    - 10.0
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0
+    - 1
+    - 2
+    - 3

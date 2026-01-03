@@ -1,0 +1,48 @@
+# DINOv3 + KernelRidge configuration
+
+experiment:
+  name: exp017_kernel_ridge
+  seed: 42
+
+backbone:
+  model_name: vit_huge_plus_patch16_dinov3.lvd1689m
+  hidden_dim: 1280
+  num_patches: 3600
+
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features
+  aug_idx: 0
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+
+head:
+  type: kernel_ridge
+  kernel: rbf
+  degree: 3
+  coef0: 1.0
+  # Grid search parameters
+  alpha:
+    - 0.01
+    - 0.1
+    - 1.0
+    - 10.0
+    - 100.0
+  gamma:
+    - 0.001
+    - 0.01
+    - 0.1
+    - null  # defaults to 1/n_features
+
+trainer:
+  n_folds: 5
+  group_col: site
+
+inference:
+  tta_indices:
+    - 0
+    - 1
+    - 2
+    - 3
