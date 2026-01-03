@@ -1,7 +1,7 @@
-# DINOv3 + SVR configuration for exp016
+# DINOv3 + SVR with PCA/PLS preprocessing
 
 experiment:
-  name: exp017_dinov3_regressors
+  name: exp017_svr_pca_pls
   seed: 42
 
 backbone:
@@ -12,14 +12,23 @@ backbone:
 dataset:
   img_size: 960
   feature_dir: data/output/013/1/extract_features
-  aug_idx: 0  # Use original only (no augmentation)
+  aug_idx: 0
   target_cols:
     - Dry_Total_g
     - GDM_g
     - Dry_Green_g
 
-svr:
+# Preprocessing: PCA and PLS for dimensionality reduction
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
+head:
+  type: svr
   kernel: rbf
+  cache_size: 2000
   # Grid search parameters
   C:
     - 0.1
@@ -35,7 +44,6 @@ svr:
     - 0.01
     - 0.1
     - 0.5
-  cache_size: 2000  # MB
 
 trainer:
   n_folds: 5

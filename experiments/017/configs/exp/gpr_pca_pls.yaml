@@ -1,7 +1,8 @@
-# DINOv3 + KernelRidge configuration
+# DINOv3 + GPR with PCA/PLS preprocessing
+# Note: GPR is computationally expensive (O(n^3))
 
 experiment:
-  name: exp017_kernel_ridge
+  name: exp017_gpr_pca_pls
   seed: 42
 
 backbone:
@@ -18,23 +19,25 @@ dataset:
     - GDM_g
     - Dry_Green_g
 
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
 head:
-  type: kernel_ridge
-  kernel: rbf
-  degree: 3
-  coef0: 1.0
+  type: gpr
+  n_restarts_optimizer: 5
+  normalize_y: true
+  alpha: 1.0e-10
   # Grid search parameters
-  alpha:
-    - 0.01
+  kernel_type:
+    - rbf
+    - matern
+  length_scale:
     - 0.1
     - 1.0
     - 10.0
-    - 100.0
-  gamma:
-    - 0.001
-    - 0.01
-    - 0.1
-    - null  # defaults to 1/n_features
 
 trainer:
   n_folds: 5

@@ -1,13 +1,13 @@
-# DINOv3 + SVR configuration
+# DINOv3 + ElasticNet with PCA/PLS preprocessing
 
 experiment:
-  name: exp017_svr
+  name: exp017_elasticnet_pca_pls
   seed: 42
 
 backbone:
   model_name: vit_huge_plus_patch16_dinov3.lvd1689m
   hidden_dim: 1280
-  num_patches: 3600  # 60x60 for 960x960 input
+  num_patches: 3600
 
 dataset:
   img_size: 960
@@ -18,25 +18,31 @@ dataset:
     - GDM_g
     - Dry_Green_g
 
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
 head:
-  type: svr
-  kernel: rbf
-  cache_size: 2000
-  # Grid search parameters (lists)
-  C:
+  type: elasticnet
+  fit_intercept: true
+  max_iter: 10000
+  # Grid search parameters
+  alpha:
+    - 0.01
     - 0.1
     - 1.0
     - 10.0
     - 100.0
-  gamma:
-    - scale
-    - 0.0001
-    - 0.001
-    - 0.01
-  epsilon:
-    - 0.01
+    - 1000.0
+  l1_ratio:
     - 0.1
+    - 0.2
+    - 0.3
     - 0.5
+    - 0.7
+    - 0.9
 
 trainer:
   n_folds: 5
@@ -44,7 +50,7 @@ trainer:
 
 inference:
   tta_indices:
-    - 0  # original
-    - 1  # hflip
-    - 2  # vflip
-    - 3  # hvflip
+    - 0
+    - 1
+    - 2
+    - 3

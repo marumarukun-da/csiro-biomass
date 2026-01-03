@@ -1,8 +1,7 @@
-# DINOv3 + GPR (Gaussian Process Regression) configuration
-# Note: GPR has O(n^3) complexity, may be slow for large datasets
+# DINOv3 + KernelRidge with PCA/PLS preprocessing
 
 experiment:
-  name: exp017_gpr
+  name: exp017_kernel_ridge_pca_pls
   seed: 42
 
 backbone:
@@ -19,19 +18,29 @@ dataset:
     - GDM_g
     - Dry_Green_g
 
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
 head:
-  type: gpr
-  n_restarts_optimizer: 5
-  normalize_y: true
-  alpha: 1.0e-10
+  type: kernel_ridge
+  kernel: rbf
+  degree: 3
+  coef0: 1.0
   # Grid search parameters
-  kernel_type:
-    - rbf
-    - matern
-  length_scale:
+  alpha:
+    - 0.01
     - 0.1
     - 1.0
     - 10.0
+    - 100.0
+  gamma:
+    - 0.001
+    - 0.01
+    - 0.1
+    - null  # defaults to 1/n_features
 
 trainer:
   n_folds: 5

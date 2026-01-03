@@ -1,7 +1,7 @@
-# DINOv3 + BayesianRidge configuration
+# DINOv3 + BayesianRidge with PCA/PLS preprocessing
 
 experiment:
-  name: exp017_bayesian_ridge
+  name: exp017_bayesian_ridge_pca_pls
   seed: 42
 
 backbone:
@@ -17,6 +17,12 @@ dataset:
     - Dry_Total_g
     - GDM_g
     - Dry_Green_g
+
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
 
 head:
   type: bayesian_ridge

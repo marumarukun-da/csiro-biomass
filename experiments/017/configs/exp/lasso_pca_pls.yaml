@@ -1,7 +1,7 @@
-# DINOv3 + Lasso configuration
+# DINOv3 + Lasso with PCA/PLS preprocessing
 
 experiment:
-  name: exp017_lasso
+  name: exp017_lasso_pca_pls
   seed: 42
 
 backbone:
@@ -18,11 +18,16 @@ dataset:
     - GDM_g
     - Dry_Green_g
 
+preprocessing:
+  pca:
+    n_components: 0.98
+  pls:
+    n_components: 16
+
 head:
   type: lasso
   fit_intercept: true
   max_iter: 10000
-  # Grid search parameters
   alpha:
     - 0.001
     - 0.01

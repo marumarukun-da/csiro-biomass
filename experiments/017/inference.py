@@ -22,6 +22,7 @@ import torch
 from tqdm import tqdm
 
 from src.backbone import build_backbone, load_backbone_weights
+from src.feature_engine import FeatureEngine
 from src.heads import MultiTargetHead, load_head
 from src.metric import derive_all_targets
 from src.seed import seed_everything
@@ -108,6 +109,33 @@ def detect_head_type(model_dir: Path) -> str:
     return head_type
 
 
+def load_feature_engines(
+    model_dir: Path,
+    folds: list[int],
+) -> list[FeatureEngine | None]:
+    """Load feature engines from all folds if they exist.
+
+    Args:
+        model_dir: Directory containing trained models.
+        folds: List of fold numbers to load.
+
+    Returns:
+        List of loaded feature engines (or None if not found for each fold).
+    """
+    engines = []
+
+    for fold in folds:
+        engine_path = model_dir / "weights" / f"feature_engine_fold{fold}.pkl"
+        if engine_path.exists():
+            engine = FeatureEngine.load(engine_path)
+            engines.append(engine)
+            print(f"Loaded feature engine from {engine_path}")
+        else:
+            engines.append(None)
+
+    return engines
+
+
 def load_head_models(
     model_dir: Path,
     folds: list[int],
@@ -148,6 +176,7 @@ def predict_single_image(
     tta_transforms: list[tuple[str, A.Compose]],
     device: torch.device,
     img_size: int = 960,
+    feature_engines: list[FeatureEngine | None] | None = None,
 ) -> np.ndarray:
     """Predict for a single image using DINOv3 backbone and head models.
 
@@ -158,6 +187,7 @@ def predict_single_image(
         tta_transforms: List of (name, transform) for TTA
         device: Device for inference
         img_size: Target image size for DINOv3
+        feature_engines: List of feature engines for each fold (or None)
 
     Returns:
         Averaged predictions [3] (Dry_Total_g, GDM_g, Dry_Green_g)
@@ -188,9 +218,15 @@ def predict_single_image(
         # Concatenate DINOv3 features + coverage features
         features = np.concatenate([cls_np, patch_mean, [coverage_raw, coverage_log]]).reshape(1, -1)
 
-        # Predict with each head model
-        for head_model in head_models:
-            pred = head_model.predict(features)[0]
+        # Predict with each head model (and optionally apply feature engine)
+        for i, head_model in enumerate(head_models):
+            # Apply feature engine if available
+            if feature_engines is not None and feature_engines[i] is not None:
+                features_transformed = feature_engines[i].transform(features)
+            else:
+                features_transformed = features
+
+            pred = head_model.predict(features_transformed)[0]
             all_preds.append(pred)
 
     # Average all predictions
@@ -206,6 +242,7 @@ def run_inference(
     device: torch.device,
     img_size: int = 960,
     image_col: str = "image_path",
+    feature_engines: list[FeatureEngine | None] | None = None,
 ) -> dict[str, np.ndarray]:
     """Run inference on test set.
 
@@ -218,6 +255,7 @@ def run_inference(
         device: Device for inference
         img_size: Target image size
         image_col: Column name for image path
+        feature_engines: List of feature engines for each fold (or None)
 
     Returns:
         Dict mapping image_path to 5 target predictions
@@ -234,7 +272,7 @@ def run_inference(
         image = cv2.cvtColor(image, cv2.COLOR_BGR2RGB)
 
         # Predict (3 values: Dry_Total_g, GDM_g, Dry_Green_g)
-        pred_3 = predict_single_image(image, backbone, head_models, tta_transforms, device, img_size)
+        pred_3 = predict_single_image(image, backbone, head_models, tta_transforms, device, img_size, feature_engines)
 
         # Derive all 5 targets from 3 predictions
         pred_5 = derive_all_targets(pred_3.reshape(1, -1))[0]
@@ -351,6 +389,13 @@ def main():
     head_models, head_type = load_head_models(model_dir, folds, args.head_type)
     print(f"Loaded {len(head_models)} {head_type} models")
 
+    # Load feature engines (if available)
+    feature_engines = load_feature_engines(model_dir, folds)
+    if any(engine is not None for engine in feature_engines):
+        print("Using feature engines for preprocessing (PCA/PLS)")
+    else:
+        feature_engines = None
+
     # Setup TTA transforms
     tta_transforms = build_tta_transforms()
     print(f"Using {len(tta_transforms)} TTA transforms")
@@ -369,6 +414,7 @@ def main():
         tta_transforms=tta_transforms,
         device=device,
         img_size=args.img_size,
+        feature_engines=feature_engines,
     )
 
     # Create submission
@@ -428,6 +474,13 @@ def kaggle_inference(
     head_models, detected_head_type = load_head_models(model_dir, folds, head_type)
     print(f"Loaded {len(head_models)} {detected_head_type} models")
 
+    # Load feature engines (if available)
+    feature_engines = load_feature_engines(model_dir, folds)
+    if any(engine is not None for engine in feature_engines):
+        print("Using feature engines for preprocessing (PCA/PLS)")
+    else:
+        feature_engines = None
+
     # Setup TTA
     tta_transforms = build_tta_transforms()
 
@@ -443,6 +496,7 @@ def kaggle_inference(
         tta_transforms=tta_transforms,
         device=device,
         img_size=img_size,
+        feature_engines=feature_engines,
     )
 
     # Create submission

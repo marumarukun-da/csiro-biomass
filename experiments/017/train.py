@@ -25,6 +25,7 @@ from sklearn.model_selection import StratifiedGroupKFold
 from tqdm import tqdm
 
 from src.data import convert_long_to_wide
+from src.feature_engine import FeatureEngine
 from src.heads import MultiTargetHead, create_head, get_available_heads
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_full
 from src.seed import seed_everything
@@ -189,6 +190,7 @@ def train_cv(
     head_cfg = cfg.get("head", {})
     trainer_cfg = cfg.get("trainer", {})
     experiment_cfg = cfg.get("experiment", {})
+    preprocessing_cfg = cfg.get("preprocessing", {})
 
     seed = experiment_cfg.get("seed", 42)
     seed_everything(seed)
@@ -203,6 +205,13 @@ def train_cv(
     head_type = head_cfg.get("type", "svr")
     base_params, param_grid = build_param_grid(head_cfg)
 
+    # Get preprocessing parameters (PCA/PLS)
+    pca_cfg = preprocessing_cfg.get("pca", {})
+    pls_cfg = preprocessing_cfg.get("pls", {})
+    n_pca = pca_cfg.get("n_components", None)
+    n_pls = pls_cfg.get("n_components", None)
+    use_preprocessing = n_pca is not None or n_pls is not None
+
     logger.info(f"Head type: {head_type}")
     logger.info(f"Available heads: {get_available_heads()}")
     logger.info(f"Feature directory: {feature_dir}")
@@ -211,6 +220,7 @@ def train_cv(
     logger.info(f"N folds: {n_folds}")
     logger.info(f"Base params: {base_params}")
     logger.info(f"Parameter grid: {param_grid}")
+    logger.info(f"Preprocessing: PCA n_components={n_pca}, PLS n_components={n_pls}")
 
     # Load data
     train_csv = config.get_train_csv_path()
@@ -261,9 +271,26 @@ def train_cv(
 
         logger.info(f"Train: {len(X_train)}, Val: {len(X_val)}")
 
+        # Apply preprocessing (PCA/PLS) if configured
+        if use_preprocessing:
+            feature_engine = FeatureEngine(n_pca=n_pca, n_pls=n_pls, scale=True)
+            feature_engine.fit(X_train, y_train)
+            X_train_transformed = feature_engine.transform(X_train)
+            X_val_transformed = feature_engine.transform(X_val)
+            logger.info(f"Feature engine: {feature_engine}")
+            logger.info(f"Transformed features: {X_train.shape} -> {X_train_transformed.shape}")
+
+            # Save feature engine
+            engine_path = weights_dir / f"feature_engine_fold{fold}.pkl"
+            feature_engine.save(engine_path)
+            logger.info(f"Feature engine saved to {engine_path}")
+        else:
+            X_train_transformed = X_train
+            X_val_transformed = X_val
+
         # Grid search
         best_model, best_params, best_score = grid_search_head(
-            head_type, base_params, X_train, y_train, X_val, y_val, param_grid, logger
+            head_type, base_params, X_train_transformed, y_train, X_val_transformed, y_val, param_grid, logger
         )
 
         # Save model
@@ -272,7 +299,7 @@ def train_cv(
         logger.info(f"Model saved to {model_path}")
 
         # Store OOF predictions
-        val_preds = best_model.predict(X_val)
+        val_preds = best_model.predict(X_val_transformed)
         oof_preds[val_mask] = val_preds
 
         fold_results.append(

@@ -1,7 +1,7 @@
-# DINOv3 + Ridge configuration
+# DINOv3 + Ridge with PCA/PLS preprocessing
 
 experiment:
-  name: exp017_ridge
+  name: exp017_ridge_pca_pls
   seed: 42
 
 backbone:
@@ -17,6 +17,20 @@ dataset:
     - Dry_Total_g
     - GDM_g
     - Dry_Green_g
+
+# Preprocessing: PCA and PLS for dimensionality reduction
+preprocessing:
+  pca:
+    # n_components can be:
+    # - float (0-1): cumulative variance ratio to preserve (e.g., 0.95 = 95%)
+    # - int: exact number of components
+    # - null: disable PCA
+    n_components: 0.98
+  pls:
+    # n_components: number of PLS components
+    # - int > 0: number of components
+    # - null: disable PLS
+    n_components: 16
 
 head:
   type: ridge
