@@ -1,7 +1,9 @@
-"""Training script for regression heads using precomputed DINOv3 features.
+"""Training script for regression heads using DINOv3 features.
 
 Supports multiple head types: SVR, Ridge, Lasso, ElasticNet, BayesianRidge,
-KernelRidge, and GPR.
+KernelRidge, GPR, GBDT (XGBoost, LightGBM, CatBoost), and ExtraTrees.
+
+Features can be loaded from precomputed .npz files or extracted online.
 """
 
 # isort: off
@@ -20,12 +22,14 @@ from typing import Any
 
 import numpy as np
 import pandas as pd
+import torch
 from omegaconf import OmegaConf
 from sklearn.model_selection import StratifiedGroupKFold
 from tqdm import tqdm
 
 from src.data import convert_long_to_wide
 from src.feature_engine import FeatureEngine
+from src.feature_extractor import extract_all_features, load_backbone
 from src.heads import MultiTargetHead, create_head, get_available_heads
 from src.metric import TARGET_COLS_PRED, weighted_r2_score_full
 from src.seed import seed_everything
@@ -191,12 +195,17 @@ def train_cv(
     trainer_cfg = cfg.get("trainer", {})
     experiment_cfg = cfg.get("experiment", {})
     preprocessing_cfg = cfg.get("preprocessing", {})
+    backbone_cfg = cfg.get("backbone", {})
 
     seed = experiment_cfg.get("seed", 42)
     seed_everything(seed)
 
-    feature_dir = Path(dataset_cfg.get("feature_dir"))
+    # Feature extraction mode: online (default) or from precomputed files
+    feature_dir = dataset_cfg.get("feature_dir", None)
+    use_online_extraction = feature_dir is None
+
     aug_idx = dataset_cfg.get("aug_idx", 0)
+    img_size = dataset_cfg.get("img_size", 960)
     target_cols = dataset_cfg.get("target_cols", TARGET_COLS_PRED)
     n_folds = trainer_cfg.get("n_folds", 5)
     group_col = trainer_cfg.get("group_col", "site")
@@ -214,8 +223,12 @@ def train_cv(
 
     logger.info(f"Head type: {head_type}")
     logger.info(f"Available heads: {get_available_heads()}")
-    logger.info(f"Feature directory: {feature_dir}")
-    logger.info(f"Augmentation index: {aug_idx}")
+    logger.info(f"Feature extraction: {'online' if use_online_extraction else 'precomputed'}")
+    if not use_online_extraction:
+        logger.info(f"Feature directory: {feature_dir}")
+        logger.info(f"Augmentation index: {aug_idx}")
+    else:
+        logger.info(f"Image size: {img_size}")
     logger.info(f"Target columns: {target_cols}")
     logger.info(f"N folds: {n_folds}")
     logger.info(f"Base params: {base_params}")
@@ -239,11 +252,39 @@ def train_cv(
     train_df = create_folds(train_df, n_folds=n_folds, group_col=group_col)
     logger.info(f"Created {n_folds} folds using StratifiedGroupKFold (group_col={group_col}, seed=38)")
 
-    # Load all features (with coverage)
+    # Load/extract features
     image_dir = config.get_image_dir()
-    logger.info("Loading features with coverage...")
-    X_all = load_all_features(train_df, feature_dir, image_dir=image_dir, aug_idx=aug_idx)
-    logger.info(f"Features shape: {X_all.shape}")
+
+    if use_online_extraction:
+        # Online feature extraction using DINOv3 backbone
+        logger.info("Extracting features online using DINOv3 backbone...")
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        logger.info(f"Using device: {device}")
+
+        # Load backbone
+        backbone_weights = backbone_cfg.get("weights_path", None)
+        backbone = load_backbone(weights_path=backbone_weights, device=device)
+        logger.info(f"Backbone loaded: {backbone.MODEL_NAME}")
+
+        # Extract features
+        X_all = extract_all_features(
+            df=train_df,
+            image_dir=image_dir,
+            backbone=backbone,
+            device=device,
+            img_size=img_size,
+            image_col="image_path",
+        )
+        logger.info(f"Features extracted: {X_all.shape}")
+
+        # Clean up backbone to free GPU memory
+        del backbone
+        torch.cuda.empty_cache()
+    else:
+        # Load from precomputed .npz files
+        logger.info("Loading features from precomputed files...")
+        X_all = load_all_features(train_df, Path(feature_dir), image_dir=image_dir, aug_idx=aug_idx)
+        logger.info(f"Features loaded: {X_all.shape}")
 
     # Extract targets
     y_all = train_df[target_cols].values

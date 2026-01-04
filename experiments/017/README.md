@@ -2,6 +2,39 @@
 
 DINOv3特徴量に対して複数の回帰モデル（head）を比較評価するための実験。
 
+## 特徴抽出
+
+2つのモードをサポート：
+
+### オンライン特徴抽出（デフォルト）
+
+学習時にDINOv3バックボーンを使って画像から直接特徴量を抽出。
+
+```yaml
+dataset:
+  img_size: 960
+  # feature_dir を省略するとオンライン抽出
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+```
+
+### 事前計算された特徴量を使用
+
+`.npz`ファイルから事前抽出された特徴量を読み込む。
+
+```yaml
+dataset:
+  img_size: 960
+  feature_dir: data/output/013/1/extract_features  # npzファイルのディレクトリ
+  aug_idx: 0  # 使用するaugmentation index
+  target_cols:
+    - Dry_Total_g
+    - GDM_g
+    - Dry_Green_g
+```
+
 ## 利用可能なHeadモデル
 
 ### 線形モデル
@@ -140,21 +173,24 @@ PLSの成分数は `min(n_samples, n_features, n_targets)` が上限です。
 
 ```
 experiments/017/
-├── train.py              # 汎用学習スクリプト
-├── inference.py          # 汎用推論スクリプト
+├── train.py                # 汎用学習スクリプト
+├── inference.py            # 汎用推論スクリプト
 ├── src/
-│   ├── feature_engine.py # PCA/PLS前処理エンジン
+│   ├── backbone.py         # DINOv3バックボーン
+│   ├── feature_extractor.py # オンライン特徴抽出
+│   ├── feature_engine.py   # PCA/PLS前処理エンジン
+│   ├── coverage.py         # 被覆率特徴
 │   └── heads/
-│       ├── base.py       # 基底クラス
-│       ├── svr.py        # SVR
-│       ├── ridge.py      # Ridge/Lasso/ElasticNet/BayesianRidge
+│       ├── base.py         # 基底クラス
+│       ├── svr.py          # SVR
+│       ├── ridge.py        # Ridge/Lasso/ElasticNet/BayesianRidge
 │       ├── kernel_ridge.py
 │       ├── gpr.py
-│       ├── gbdt.py       # GradientBoosting/HistGradientBoosting
+│       ├── gbdt.py         # GradientBoosting/HistGradientBoosting
 │       ├── xgboost_head.py
 │       ├── lightgbm_head.py
 │       ├── catboost_head.py
 │       └── extratrees.py
 └── configs/exp/
-    └── *.yaml            # 各headの設定ファイル
+    └── *.yaml              # 各headの設定ファイル
 ```

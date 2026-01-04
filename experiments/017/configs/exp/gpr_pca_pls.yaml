@@ -12,8 +12,7 @@ backbone:
 
 dataset:
   img_size: 960
-  feature_dir: data/output/013/1/extract_features
-  aug_idx: 0
+  # feature_dir: (omit to use online extraction)
   target_cols:
     - Dry_Total_g
     - GDM_g
